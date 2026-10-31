@@ -131,6 +131,31 @@ def test_claude_unrecognized_delivery_reply_records_diagnostic(owners):
     assert len(store.worker_path(A, "events.ndjson").read_text().splitlines()) == 1
 
 
+def test_claude_send_waits_for_a_slow_host_to_take_ownership(owners, monkeypatch):
+    import threading
+    from ccx.ops import send as ops_send
+    from ccx.store.root import NativeEffectIndeterminate
+    monkeypatch.setattr(ops_send, "_OWNERSHIP_GRACE_S", 3.0)
+    calls = []
+
+    def slow_host(handle, sid, prompt, delivery_id, budget):
+        # The host takes the message after the client's reply wait expired.
+        calls.append(delivery_id)
+        threading.Timer(0.4, claude_delivery.mark_owned, (handle, delivery_id),
+                        {"route": "new_turn"}).start()
+        return {"ok": False, "error": "timeout"}
+
+    result = send_turn(A, "slow host", delivery_id="live2-slow-host",
+                       _native_submit=slow_host)
+    assert result["status"] == "owned" and calls == ["live2-slow-host"]
+
+    monkeypatch.setattr(ops_send, "_OWNERSHIP_GRACE_S", 0.3)
+    with pytest.raises(NativeEffectIndeterminate, match=r"unconfirmed \(timeout\)"):
+        send_turn(A, "host never takes it", delivery_id="live2-never-owned",
+                  _native_submit=lambda *a: {"ok": False, "error": "timeout"})
+    assert claude_delivery.read_receipt(A, "live2-never-owned")["state"] == "prepared"
+
+
 def test_stopped_claude_steer_connection_error_is_one_clean_sentence(
     owners, monkeypatch,
 ):

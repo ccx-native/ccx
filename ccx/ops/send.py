@@ -13,6 +13,9 @@ from ccx.errors import (
 )
 from ccx.ops.common import _normalize_caller_metadata, split_target
 
+# How long a send keeps checking the receipt after the host's reply timed out.
+_OWNERSHIP_GRACE_S = 10.0
+
 
 def send_turn(
     target: str, text: str, *, delivery_id: str,
@@ -387,6 +390,14 @@ def send_turn(
     # that instead of an indeterminate send.
     if "nativeEvidenceSha256" not in response:
         observed = claude_delivery.read_receipt(handle, delivery_id)
+        # A busy host (e.g. just restarted) can take the message after our
+        # short reply wait. Keep reading its receipt for a while; never resend.
+        deadline = time.monotonic() + _OWNERSHIP_GRACE_S
+        while (response.get("error") == "timeout"
+               and (observed is None or observed.get("state") == "prepared")
+               and time.monotonic() < deadline):
+            time.sleep(0.1)
+            observed = claude_delivery.read_receipt(handle, delivery_id)
         if not (response.get("ok") is True
                 and isinstance(response.get("delivery"), dict)
                 and response["delivery"].get("delivery_id") == delivery_id):
