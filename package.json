@@ -1,0 +1,42 @@
+{
+  "name": "ccx-native",
+  "version": "0.1.0",
+  "description": "Run Claude Code and Codex as persistent workers on your own machine.",
+  "author": "Fernando <ccx@delega.ai>",
+  "license": "MIT",
+  "bin": {
+    "ccx": "bin/ccx"
+  },
+  "files": [
+    "bin/ccx",
+    "ccx.py",
+    "ccx/**/*.py",
+    "!ccx/codex/schema.py",
+    "skills/",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml"
+  ],
+  "scripts": {
+    "test": "python3 -m compileall -q ccx ccx.py"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "agent",
+    "terminal",
+    "pty",
+    "automation"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oneferdev/ccx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/oneferdev/ccx/issues"
+  },
+  "homepage": "https://github.com/oneferdev/ccx#readme"
+}

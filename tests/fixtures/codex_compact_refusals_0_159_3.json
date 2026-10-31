@@ -1,0 +1,31 @@
+{
+  "codex_version": "0.159.3",
+  "source": "disposable gpt-6-luna app-server probe, 2026-10-03",
+  "refusals": {
+    "turn/steer": {
+      "method": "turn/steer",
+      "code": -32600,
+      "message": "cannot steer a compact turn",
+      "data": {
+        "message": "cannot steer a compact turn",
+        "codexErrorInfo": {
+          "activeTurnNotSteerable": {
+            "turnKind": "compact"
+          }
+        },
+        "additionalDetails": null,
+        "misalignment": null
+      },
+      "requestId": 5,
+      "transport": false
+    },
+    "turn/start": {
+      "method": "turn/start",
+      "code": -32603,
+      "message": "failed to submit turn input: ActiveTurnNotSteerable { turn_kind: Compact }",
+      "data": null,
+      "requestId": 6,
+      "transport": false
+    }
+  }
+}

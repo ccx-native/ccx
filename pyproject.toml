@@ -1,0 +1,85 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ccx-native"
+version = "0.1.0"
+description = "Run Claude Code and Codex as persistent workers on your own machine."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Fernando", email = "ccx@delega.ai" }]
+dependencies = []
+keywords = ["claude-code", "codex", "agent", "cli", "terminal", "automation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development",
+]
+
+[project.scripts]
+ccx = "ccx.cli.main:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-xdist>=3.6"]
+
+[project.urls]
+Homepage = "https://github.com/oneferdev/ccx"
+Repository = "https://github.com/oneferdev/ccx"
+Issues = "https://github.com/oneferdev/ccx/issues"
+
+[tool.hatch.build.targets.sdist]
+# Allowlist: hatchling's default sdist ships every file not ignored by VCS,
+# which would include internal memos, plans and evidence at the repo root.
+# Only the package, its tests, public docs and project metadata are published.
+only-include = [
+  "ccx",
+  "ccx.py",
+  "bin",
+  "docs",
+  "examples",
+  "scripts",
+  "skills",
+  "tests",
+  "README.md",
+  "CHANGELOG.md",
+  "LICENSE",
+  "CONTRIBUTING.md",
+  "SECURITY.md",
+  "package.json",
+  "pyproject.toml",
+]
+exclude = [
+  "/tests/evidence",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["ccx"]
+# Maintainer tooling for scripts/check_codex_protocol.py and its contract
+# test; nothing at runtime imports it, so installs do not need it.
+exclude = ["/ccx/codex/schema.py"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# The agent skills ship as package data; `ccx skills` prints where they are.
+"skills" = "ccx/_skills"
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Start with what can only be a bug: syntax errors, invalid comparisons and
+# undefined names. Widen (e.g. F401 unused imports) once existing hits are fixed.
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

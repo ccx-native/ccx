@@ -1,0 +1,1 @@
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-03T15:38:33.241Z","content":"<task-notification>\n<task-id>bz0edk7ap</task-id>\n<summary>Monitor event: \"watch sync job\"</summary>\n<event>[Monitor timed out — re-arm if needed.]</event>\n</task-notification>"}

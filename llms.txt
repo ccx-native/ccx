@@ -1,0 +1,34 @@
+# ccx
+
+> A CLI and Python library for persistent local Claude Code and Codex workers, using your own accounts. Install with `uv tool install ccx-native`. The command is `ccx`.
+
+Every CLI command documents itself: run `ccx help` and `ccx help COMMAND`. Agents can install the skill with `ccx skills install`.
+
+## Guides
+
+- [Getting started](docs/getting-started.md): install, first worker, follow-ups, waiting, reading replies
+- [Concepts](docs/concepts.md): workers, engines, states, talking to a worker, engine differences
+- [Codex workers](docs/codex.md): what differs for Codex, the shared daemon, Codex as orchestrator
+- [Permissions](docs/permissions.md): full and restricted modes, approvals, questions, MCP forms
+- [Usage and caps](docs/usage.md): reading plan usage, per-turn caps
+- [Controllers](docs/controllers.md): Python scripts that drive several workers and survive interruption
+- [Troubleshooting](docs/troubleshooting.md): exit codes, lost messages, stuck workers, upgrades
+
+## Reference
+
+- [Python API](docs/python/README.md): clients, results, waiting, errors
+- [WorkerClient](docs/python/workers.md): every method of the engine-neutral client
+- [Engine clients](docs/python/engines.md): Claude-only and Codex-only extras
+- [JSON protocol](docs/rpc/README.md): requests, responses, safe retries, errors, persistent mode
+- [RPC operations](docs/rpc/operations.md): every operation and its parameters
+
+## Optional
+
+- [What ccx changes on your machine](docs/machine-changes.md): files, processes, network, uninstall
+- [Architecture](docs/architecture.md): what runs, package map, state on disk
+- [Security](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+
+## Known limitations
+
+See the [README](README.md#known-limitations) for platform and provider limits.

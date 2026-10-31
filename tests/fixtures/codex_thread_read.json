@@ -1,0 +1,90 @@
+{
+  "id": "th_fixture_1",
+  "cwd": "/workspace",
+  "turns": [
+    {
+      "id": "t1",
+      "status": "completed",
+      "startedAt": 1780000000,
+      "completedAt": 1780000060,
+      "itemsView": "full",
+      "items": [
+        {
+          "type": "userMessage",
+          "id": "i1",
+          "content": [
+            {"type": "text", "text": "hello world"},
+            {"type": "localImage", "path": "/tmp/shot.png"}
+          ]
+        },
+        {
+          "type": "reasoning",
+          "id": "i2",
+          "summary": ["considered the options"],
+          "content": [{"type": "text", "text": "HIDDEN CHAIN OF THOUGHT"}]
+        },
+        {"type": "agentMessage", "id": "i3", "text": "hi"},
+        {
+          "type": "commandExecution",
+          "id": "i4",
+          "command": "echo hi",
+          "cwd": "/workspace",
+          "status": "completed",
+          "exitCode": 0,
+          "aggregatedOutput": "hi\n"
+        },
+        {
+          "type": "fileChange",
+          "id": "i5",
+          "status": "completed",
+          "changes": [{"path": "/workspace/a.py", "kind": "update", "diff": "@@ -1 +1 @@"}]
+        },
+        {
+          "type": "mcpToolCall",
+          "id": "i6",
+          "server": "srv",
+          "tool": "do",
+          "arguments": {"a": 1},
+          "status": "completed",
+          "result": {"ok": true}
+        },
+        {"type": "webSearch", "id": "i7", "query": "ccx", "action": {"type": "search"}},
+        {"type": "contextCompaction", "id": "i8"},
+        {"type": "plan", "id": "i9", "text": "the plan"},
+        {
+          "type": "reasoningV2",
+          "id": "i10",
+          "summary": ["future variant"],
+          "content": [{"type": "text", "text": "HIDDEN FUTURE THOUGHT"}]
+        }
+      ]
+    },
+    {
+      "id": "t2",
+      "status": "completed",
+      "startedAt": 1780000100,
+      "completedAt": 1780000160,
+      "itemsView": "summary",
+      "items": [{"type": "agentMessage", "id": "j1", "text": "display summary only"}]
+    },
+    {
+      "id": "t3",
+      "status": "failed",
+      "startedAt": 1780000200,
+      "completedAt": 1780000260,
+      "itemsView": "full",
+      "error": {"message": "boom"},
+      "items": [
+        {
+          "type": "commandExecution",
+          "id": "k1",
+          "command": "run",
+          "cwd": "/workspace",
+          "status": "completed",
+          "exitCode": 0,
+          "aggregatedOutput": null
+        }
+      ]
+    }
+  ]
+}

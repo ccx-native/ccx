@@ -1,0 +1,40 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+
+# Local scratch directory for notes, spikes, and live tests that need a real
+# `claude` login. Ignored so it never gets committed.
+private/
+
+# Unit tests live in /tests/ and are tracked.
+
+# Project-local Claude Code state, if `claude` is ever run in this directory
+# (settings.local.json, permission allowlists, project-local memory, etc.).
+# The actual user memory lives under ~/.claude/, outside this repo.
+.claude/
+
+# Local-only test artifacts
+*.transcript.json
+*.log
+
+# Local documentation builds
+site/
+
+# Python environments and build outputs
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node, editor/OS, and runtime leftovers
+node_modules/
+.env
+.DS_Store
+*.sock
+*.pid

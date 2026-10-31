@@ -1,0 +1,50 @@
+#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const path = require("node:path");
+
+const script = path.resolve(__dirname, "..", "ccx.py");
+const candidates = process.env.PYTHON ? [process.env.PYTHON] : ["python3", "python"];
+
+// ccx needs 3.11+; an older interpreter would fail with a SyntaxError or a
+// missing tomllib instead of saying so.
+const versionProbe = "import sys; print('%d.%d' % sys.version_info[:2]); sys.exit(sys.version_info < (3, 11))";
+
+let lastError = null;
+const tooOld = [];
+for (const python of candidates) {
+  const probe = spawnSync(python, ["-c", versionProbe], { encoding: "utf8" });
+  if (probe.error && probe.error.code === "ENOENT") {
+    lastError = probe.error;
+    continue;
+  }
+  if (!probe.error && probe.status !== 0) {
+    tooOld.push(`${python} is Python ${(probe.stdout || "").trim() || "unknown"}`);
+    continue;
+  }
+  const result = spawnSync(python, [script, ...process.argv.slice(2)], {
+    stdio: "inherit"
+  });
+
+  if (result.error) {
+    if (result.error.code === "ENOENT") {
+      lastError = result.error;
+      continue;
+    }
+    console.error(`ccx: failed to run ${python}: ${result.error.message}`);
+    process.exit(1);
+  }
+
+  if (result.signal) {
+    process.kill(process.pid, result.signal);
+  }
+  process.exit(result.status ?? 0);
+}
+
+console.error(
+  "ccx: Python 3.11+ is required" + (tooOld.length ? ` (${tooOld.join("; ")})` : "") +
+  ". Set PYTHON=/path/to/python if needed."
+);
+if (lastError && process.env.CCX_DEBUG) {
+  console.error(lastError.message);
+}
+process.exit(127);
