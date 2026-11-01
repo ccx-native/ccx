@@ -70,6 +70,7 @@ from ccx.ops.steer_ops import (
     transition_delivery as transition_steer_delivery,
     unproven_deliveries as unproven_steer_deliveries,
 )
+from ccx.ops.context_events import ContextChanges
 from ccx.ops.semantics import KIND_ELICITATION, KIND_PERMISSION, elicitation_response_problem
 from ccx.constants import (
     BOOT_TIMEOUT_S,
@@ -732,6 +733,7 @@ def _run_host(args):
         # amortization counter for sidecar rotation checks.
         "event_seq": 0,
         "events_since_rotate_check": 0,
+        "context_changes": ContextChanges(),
         # tool_use_id → PreToolUse wall-clock, used to compute tool durations.
         "tool_starts": {},
         # Set to True once the record name has been updated from the ai-title
@@ -1015,6 +1017,40 @@ def _run_host(args):
                 bg["pending"].add(tool_id)
             else:
                 bg["pending_anonymous"] = True
+
+    def _broadcast_context(snapshot: dict) -> None:
+        broadcast({"type": "context_changed", "context": snapshot,
+                   "turn_ref": snapshot.get("as_of_turn_ref")})
+
+    def publish_context(snapshot: dict | None, *, force: bool = False) -> None:
+        changed = state["context_changes"].observe(snapshot, force=force)
+        if changed is not None:
+            _broadcast_context(changed)
+
+    def observe_statusline_context() -> None:
+        # The relay owns only a bound statusline sidecar, not the event journal.
+        from ccx.claude.context import read_claude_observation, public_context
+        owner = store.resolve(f"claude:{short}")
+        record = store.record(owner.worker)
+        observation = read_claude_observation(store, owner, record)
+        block = observation.get("context") if observation else None
+        publish_context(public_context(block, engine="claude"))
+
+    def compact_context_fence(reason: str | None) -> None:
+        from ccx.claude.context import compaction_unknown_context, public_context
+        block = (compaction_unknown_context(reason, as_of_ms=int(time.time() * 1000))
+                 if reason is not None else None)
+        try:
+            store.mutate_record(f"claude:{short}", patches={"context": block})
+        except Exception:
+            return  # an advisory context event cannot break the native compact
+        if reason is not None:
+            publish_context(public_context(block, engine="claude"), force=True)
+        else:
+            try:
+                observe_statusline_context()
+            except Exception:
+                pass
 
     # The select loop alone owns both the PTY and the attachment's stream.
     hub = HostAttachment(
@@ -1525,6 +1561,8 @@ def _run_host(args):
             if outcome == "interrupted" or interrupted:
                 event["interrupted"] = True
         stamped = broadcast(event)
+        from ccx.claude.context import public_context
+        publish_context(public_context(context, engine="claude"), force=True)
         changes = bg["settle_changes"]
         bg["settle_changes"] = []
         if changes or materially_changed(bg["last"], bg_summary):
@@ -3051,6 +3089,7 @@ def _run_host(args):
             state["post_compact_hold"] = None
             set_state(S.IDLE)
         request_refresh()
+        compact_context_fence("just_compacted" if status == "succeeded" else None)
         if status == "failed":
             broadcast({
                 "type": "compact_failed",
@@ -3160,6 +3199,16 @@ def _run_host(args):
         # status request must first pass the exact root/gen/worker handshake
         # on this same kernel-authenticated connection. Native hook frames
         # have their own stronger original child PID/start/source check.
+        if op == "statusline-updated":
+            # Same-UID advisory wake only; source validation is performed on
+            # the original bound statusline sidecar. No reply and no native effect.
+            if (msg.get("worker_id") == short
+                    and msg.get("session_id") == session_id):
+                try:
+                    observe_statusline_context()
+                except Exception:
+                    pass
+            return
         if (op not in ("handshake", "hook-event")
                 and client_sock not in state["handshaken_clients"]):
             client_sock.sendall((json.dumps({
@@ -3614,6 +3663,7 @@ def _run_host(args):
                 "operation_id": operation_id,
                 "fence_offset": operation.get("fence_offset", 0),
             })
+            compact_context_fence("compacting")
             client_sock.sendall((json.dumps({
                 "ok": True,
                 "state": S.BUSY,
@@ -4795,6 +4845,11 @@ def _run_host(args):
                     state["cancel_clear"] = None
                     state["last_activity"] = now
                     broadcast({"type": "cancel_residue_cleared", "turn_ref": clear.get("turn_ref")})
+
+            # Flush the most recent statusline nudge once the 5 s window opens.
+            pending_context = state["context_changes"].flush()
+            if pending_context is not None:
+                _broadcast_context(pending_context)
 
             # Reconcile the one original semantic delivery; only native evidence
             # can advance placement, and reconciliation never re-pastes.

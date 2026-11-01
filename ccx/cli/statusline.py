@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import socket
 from pathlib import Path
 import signal
 import subprocess
@@ -73,6 +74,23 @@ def write_statusline_sidecar(short: str, payload: dict) -> str | None:
     return rec.get("cwd") if isinstance(rec.get("cwd"), str) else None
 
 
+def nudge_statusline_host(short: str, session_id: str) -> None:
+    """One best-effort local wake. The host, not this relay, reads and journals."""
+    from ccx.store.paths import sock_path
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.setblocking(False)
+            # Never select/wait for a busy host and never read an ACK.
+            if sock.connect_ex(str(sock_path(short))) != 0:
+                return
+            sock.send((json.dumps({
+                "op": "statusline-updated", "worker_id": short,
+                "session_id": session_id,
+            }) + "\n").encode())
+    except (OSError, ValueError):
+        pass
+
+
 def _configured_statusline(cwd: Path) -> str | None:
     """Resolve Claude's user -> project -> local command, omitting our sidecar.
 
@@ -115,6 +133,7 @@ def cmd_statusline_relay(args) -> None:
         cwd_string = write_statusline_sidecar(args.short, payload)
         if not cwd_string:
             return
+        nudge_statusline_host(args.short, payload.get("session_id"))
         cwd = Path(cwd_string)
         command = _configured_statusline(cwd)
         if command is None:

@@ -203,6 +203,37 @@ def current_context(record: dict, *, engine: str,
     lifecycle = lifecycle if isinstance(lifecycle, dict) else {}
     active = (lifecycle.get("activeTurnId") is not None if engine == "codex"
               else lifecycle.get("state") in {"busy", "waiting", "resuming"})
+    if engine == "claude":
+        # A compact fence is owned by the host, independently of advisory
+        # statusline timestamps. A new statusline refresh can still contain
+        # pre-compact tokens, so only a later genuinely settled assistant turn
+        # is permitted to release the fence.
+        fence = record.get("context")
+        if (isinstance(fence, dict)
+                and fence.get("reason") in _COMPACTION_UNKNOWN_REASONS):
+            boundary = fence.get("as_of_ms")
+            fresh = (isinstance(settled, dict)
+                     and type(boundary) is int
+                     and type(settled.get("as_of_ms")) is int
+                     and settled["as_of_ms"] > boundary
+                     and settled.get("tokens_used") is not None)
+            newer_boundary = (
+                isinstance(live, dict)
+                and live.get("reason") in _COMPACTION_UNKNOWN_REASONS
+                # The verified native compact boundary outranks a host-side
+                # "compacting" latch even if the native timestamp is older
+                # than the observation time of the pending local command.
+                and (fence.get("reason") == "compacting"
+                     and live.get("reason") == "just_compacted"
+                     or type(live.get("as_of_ms")) is int
+                     and (type(boundary) is not int or live["as_of_ms"] >= boundary)
+                     and (fence.get("reason") != "just_compacted"
+                          or live.get("reason") == "just_compacted"))
+            )
+            if not fresh and newer_boundary:
+                return live
+            if not fresh:
+                return fence
     if engine == "codex" and isinstance(record.get("activeCompact"), dict):
         # Fence tokens, not the independently observed native window capacity.
         previous = live if isinstance(live, dict) else settled or {}

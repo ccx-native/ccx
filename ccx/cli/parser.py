@@ -345,7 +345,8 @@ def _add_events_args(parser) -> None:
     parser.add_argument("--kind", action="append", default=None, metavar="KIND",
                      help="Only this event kind (repeatable): state, turn.started, turn.ended, "
                           "tool.started, tool.finished, input.requested, input.resolved, "
-                          "compact.started, compact.ended, delivery.changed, background.changed, error.")
+                          "compact.started, compact.ended, delivery.changed, background.changed, "
+                          "context.changed, error.")
     _add_json_flag(parser, help="NDJSON while following (events and heartbeats); "
                              "otherwise one page object with next_cursor.")
 

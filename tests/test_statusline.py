@@ -315,3 +315,41 @@ def test_statusline_timeout_kills_entire_owned_process_group(
                 os.kill(child_pid, signal.SIGKILL)  # test-owned PID only
             except ProcessLookupError:
                 pass
+
+
+def test_statusline_nudge_is_nonblocking_no_reply_and_bound_to_written_sidecar(
+    active_relay, monkeypatch, capsys,
+):
+    """The native relay sends no usage itself; it only nudges the host socket."""
+    import socket
+    from ccx.store.paths import sock_path
+    endpoint = sock_path(A)
+    endpoint.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        server.bind(str(endpoint))
+        server.listen(1)
+        server.settimeout(1)
+        _invoke_relay(monkeypatch, _payload(active_relay, tokens=32100))
+        assert capsys.readouterr().out == ""
+        with server.accept()[0] as peer:
+            peer.settimeout(1)
+            notice = json.loads(peer.recv(4096).decode().strip())
+        assert notice == {"op": "statusline-updated", "worker_id": A,
+                          "session_id": _payload(active_relay)["session_id"]}
+        doc = active_relay.read_worker_sidecar(A, "statusline.json")
+        assert doc["contextWindow"]["total_input_tokens"] == 32100
+    finally:
+        server.close()
+        endpoint.unlink(missing_ok=True)
+
+
+def test_statusline_nudge_unreachable_does_not_affect_render(
+    active_relay, monkeypatch, tmp_path, capsys,
+):
+    """No socket reply or host is ever required to render user's statusline."""
+    config = Path(active_relay.record(A)["cwd"]) / ".claude" / "settings.json"
+    _install_statusline_command(config, "printf 'OWNED-STATUS\\n'")
+    _invoke_relay(monkeypatch, _payload(active_relay, tokens=12345))
+    assert capsys.readouterr().out == "OWNED-STATUS\n"
+    assert active_relay.read_worker_sidecar(A, "statusline.json")["contextWindow"]["total_input_tokens"] == 12345
