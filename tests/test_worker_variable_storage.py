@@ -138,6 +138,22 @@ def test_hidden_full_uuid_python_uses_existing_durable_runner_and_atomic_lock(ow
 
 
 def test_exact_owner_mode_live_rebind_and_stale_token_are_fenced(owned):
+    # LiveOwner deliberately installs process-global stdio proxies. Keep
+    # this integration scenario out of xdist's own Python/IPC process:
+    # an isolated pytest child runs every original assertion below.
+    if os.environ.get("_CCX_TEST_LIVE_REBIND_CHILD") != "1":
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("PYTEST_XDIST_", "CCX_SELF_"))
+               and key not in ("PYTEST_CURRENT_TEST", "CCX_ROOT")}
+        env["PYTHONPATH"] = str(REPO)
+        env["_CCX_TEST_LIVE_REBIND_CHILD"] = "1"
+        isolated = subprocess.run([
+            sys.executable, "-B", "-m", "pytest", "-q", "-p", "no:xdist",
+            "-o", "faulthandler_timeout=60",
+            f"{__file__}::test_exact_owner_mode_live_rebind_and_stale_token_are_fenced",
+        ], env=env, cwd=REPO, capture_output=True, text=True, timeout=90)
+        assert isolated.returncode == 0, (isolated.stdout, isolated.stderr)
+        return
     with pytest.raises(InvalidTarget):
         live_vars.publish_attachment(live_vars.prepare_durable_attachment({"bad": 1}),
                                      "claude", A[:8])
