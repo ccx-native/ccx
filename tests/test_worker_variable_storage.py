@@ -212,6 +212,24 @@ def test_exact_owner_mode_live_rebind_and_stale_token_are_fenced(owned):
         second_owner.close()
 
 
+def test_live_owner_close_reaps_acceptors_and_restores_streams(owned):
+    """Rapid owner replacement must not leave capture proxies or accept threads."""
+    streams = (sys.stdin, sys.stdout, sys.stderr)
+    for _ in range(12):
+        first_owner = live_vars.LiveOwner()
+        competing_owner = live_vars.LiveOwner()
+        try:
+            assert first_owner.socket_path != competing_owner.socket_path
+        finally:
+            competing_owner.close()
+            first_owner.close()
+        assert (sys.stdin, sys.stdout, sys.stderr) == streams
+        assert not first_owner._accept_thread.is_alive()
+        assert not competing_owner._accept_thread.is_alive()
+        assert not first_owner._executor_thread.is_alive()
+        assert not competing_owner._executor_thread.is_alive()
+
+
 # Stored variables and independent shared state identity.
 import multiprocessing
 import stat

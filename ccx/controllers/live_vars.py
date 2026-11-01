@@ -1168,6 +1168,9 @@ class LiveOwner:
                 pass
             bind_private_unix_socket(self._server, self.socket_path)
             self._server.listen()
+            # Closing a listening fd from another thread does not reliably
+            # interrupt a blocked accept() on Linux. Poll for shutdown.
+            self._server.settimeout(0.1)
         except BaseException:
             try:
                 self._server.close()
@@ -1231,6 +1234,8 @@ class LiveOwner:
         while not self._closed.is_set():
             try:
                 conn = accept_same_user(self._server)
+            except socket.timeout:
+                continue
             except OSError:
                 return
             if conn is None:
@@ -1451,6 +1456,12 @@ class LiveOwner:
         except FileNotFoundError:
             pass
         self._queue.put(None)
+        # Wait briefly for both daemon loops to finish. In particular, the
+        # executor restores sys.stdin/stdout/stderr; without this join a new
+        # LiveOwner can wrap a proxy from a closed owner and strand it forever.
+        for worker in (self._accept_thread, self._executor_thread):
+            if threading.current_thread() is not worker:
+                worker.join(timeout=1.0)
         # Never remove a sidecar that a newer controller or durable send owns.
         for engine, worker_id in list(self._workers):
             try:
