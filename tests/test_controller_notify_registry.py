@@ -294,6 +294,17 @@ def test_final_only_cancel_and_ambiguous_native_wake(fixture, monkeypatch):
 
     def machine(message, *, timeout):
         calls.append(message)
+        if message.get("op") == "background-refresh":
+            # S2's best-effort observation follows the *durable* delivered
+            # transition. It is not another machine wake/turn/start.
+            assert message == {
+                "op": "background-refresh", "short": A,
+                "rpcGeneration": constants.CODEXD_RPC_GENERATION,
+            }
+            assert timeout <= 0.25
+            assert notify.read_registration(killed["eventId"])["state"] == "delivered"
+            return {"transport": "absent", "ok": False}
+        assert message["op"] == "parent-notify"
         assert message["eventId"] == killed["eventId"]
         assert message["deliveryId"] == expected["deliveryId"]
         assert message["short"] == A and message["reconcile"] is False
@@ -306,5 +317,5 @@ def test_final_only_cancel_and_ambiguous_native_wake(fixture, monkeypatch):
     monkeypatch.setattr(codex_runtime, "daemon_rpc", machine)
     notify.mutate_registration(killed["eventId"], lambda row: row.update(nextAttemptAtMs=0))
     notifyd.process_registration(notify.read_registration(killed["eventId"]))
-    assert len(calls) == 1
+    assert [call["op"] for call in calls] == ["parent-notify", "background-refresh"]
     assert notify.read_registration(killed["eventId"])["state"] == "delivered"
