@@ -1859,12 +1859,16 @@ class WorkerClient:
                         thread = {"id": thread_id, "threadSource": store.codex_source(owner.worker),
                                   "turns": []}
                     else:
+                        # Only rich Codex peek requests a bounded recent window.
+                        # Ordinary full conversation, logs and export retain
+                        # their unmodified source-read argument contract.
+                        recent = ({"limit": codex_recent_turns, "newest_first": True}
+                                  if codex_recent_turns is not None else {})
                         thread = codex_runtime.read_thread(
                             thread_id, cwd=rec["cwd"], timeout=read_budget(),
                             worker_id=owner.worker_id,
                             expected_source=store.codex_source(owner.worker),
-                            limit=codex_recent_turns,
-                            newest_first=codex_recent_turns is not None,
+                            **recent,
                         )
                     document = _conv.build_codex(
                         rec, thread, state=normalize_native_state(
