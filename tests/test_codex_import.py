@@ -159,3 +159,14 @@ def test_cli_auto_detect_prefers_claude_without_probing_codex(tmp_path, monkeypa
                         lambda _root: (_ for _ in ()).throw(RuntimeError("claude path")))
     with pytest.raises(RuntimeError, match="claude path"):
         cli.cmd_import(Namespace(session=A, engine=None, model=None, effort=None))
+
+
+def test_deleted_source_thread_failure_is_explained():
+    from ccx.codex.runtime import _served_failure, explain_native_failure
+    raw = ("thread/resume failed: invalid paginated history lineage for "
+           "01a19929-3fe8-7f30-947e-234dbcd2dee6: missing source rollout")
+    explained = explain_native_failure(raw)
+    assert explained.startswith("the Codex thread this worker was forked or imported from was deleted")
+    assert raw in explained
+    assert _served_failure({"error": raw}, "fallback") == explained
+    assert explain_native_failure("model not found") == "model not found"

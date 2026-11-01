@@ -704,8 +704,10 @@ def ensure_ready(
             or result.get("ok") is not True
             or result.get("loaded") is not True
             or result.get("state") != "idle"):
+        from ccx.codex.runtime import explain_native_failure
         raise SessionUnavailable("Codex could not resume to an idle state; check worker status: "
-                                 + str(result.get("error") or result.get("state")),
+                                 + explain_native_failure(
+                                     str(result.get("error") or result.get("state"))),
                                  short=worker_id[:8])
     store.revalidate()
     return {"worker": handle, "worker_id": worker_id,

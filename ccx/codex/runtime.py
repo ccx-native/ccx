@@ -667,6 +667,14 @@ def observe_registry(*, timeout: float = 1.0) -> dict[str, Any]:
     return {"presence": RUNTIME_INCONCLUSIVE, "workers": {}, "reply": reply}
 
 
+def explain_native_failure(message: str) -> str:
+    """Put a plain-language cause in front of known native Codex failures."""
+    if "missing source rollout" in message:
+        return ("the Codex thread this worker was forked or imported from was "
+                f"deleted, so its history can't be read ({message})")
+    return message
+
+
 def _served_failure(reply: dict[str, Any], fallback: str) -> str:
     """The most specific message a failed daemon reply carries.
 
@@ -675,12 +683,12 @@ def _served_failure(reply: dict[str, Any], fallback: str) -> str:
     """
     structured = reply.get("protocolError")
     if isinstance(structured, dict) and isinstance(structured.get("message"), str):
-        return structured["message"]
-    return str(reply.get("error") or fallback)
+        return explain_native_failure(structured["message"])
+    return explain_native_failure(str(reply.get("error") or fallback))
 
 
 def _history_failure(error: BaseException, thread_id: str) -> CcxError:
-    message = getattr(error, "message", str(error))
+    message = explain_native_failure(getattr(error, "message", str(error)))
     if _is_missing_history(message):
         return SessionNotFound(message, short=thread_id)
     return SessionUnavailable(message, short=thread_id)
