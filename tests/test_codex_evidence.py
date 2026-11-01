@@ -331,7 +331,10 @@ def test_usage_fsync_policy_is_turn_identity_aware(original_codex, monkeypatch):
     samples = []
     original = worker.evidence.record
     def capture(method, params, **kwargs):
-        samples.append((method, params.get("turnId"), kwargs.get("durable")))
+        # Sparse context.changed projections are separate journal entries;
+        # the fsync policy under test applies to native usage records only.
+        if method == codex_evidence.TOKEN_USAGE_METHOD:
+            samples.append((method, params.get("turnId"), kwargs.get("durable")))
         return original(method, params, **kwargs)
     monkeypatch.setattr(worker.evidence, "record", capture)
     usage = {"threadId": tid, "turnId": "turn-old",
@@ -355,7 +358,8 @@ def test_usage_fsync_policy_is_turn_identity_aware(original_codex, monkeypatch):
         late = []
         original = reloaded.evidence.record
         def capture_late(method, params, **kwargs):
-            late.append(kwargs.get("durable"))
+            if method == codex_evidence.TOKEN_USAGE_METHOD:
+                late.append(kwargs.get("durable"))
             return original(method, params, **kwargs)
         monkeypatch.setattr(reloaded.evidence, "record", capture_late)
         reloaded.on_notification(codex_evidence.TOKEN_USAGE_METHOD, usage)

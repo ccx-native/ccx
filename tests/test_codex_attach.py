@@ -222,6 +222,8 @@ def _attach_daemon(state="idle"):
     worker = SimpleNamespace(
         loaded=True, teardown_claimed=False, lock=threading.RLock(),
         attach_count=0, _bg_open={}, last_activity=time.monotonic() - 120,
+        # Match the real Worker interface: janitor's harmless context flush.
+        flush_context=lambda: None,
         record={"lifecycle": {"state": state},
                 "native": {"threadId": "native-thread"}, "cwd": "/tmp"},
     )

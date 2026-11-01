@@ -887,7 +887,7 @@ class Worker:
             engine="codex", compacting=isinstance(self.record.get("activeCompact"), dict),
         )
 
-    def _append_context_locked(self, value: dict) -> None:
+    def _append_context_locked(self, value: dict, *, save: bool = True) -> None:
         turn_id = ((self.record.get("lifecycle") or {}).get("activeTurnId")
                    or (self.record.get("lastTurn") or {}).get("turnId"))
         self.evidence.record(
@@ -896,9 +896,11 @@ class Worker:
             thread_id=(self.record.get("native") or {}).get("threadId"),
         )
         self.record["evidence"] = self.evidence.state()
-        self._save()
+        if save:
+            self._save()
 
-    def _publish_context_locked(self, *, force: bool = False) -> None:
+    def _publish_context_locked(self, *, force: bool = False,
+                                save: bool = True) -> None:
         view = self._context_snapshot_locked()
         previous = self._context_changes.last
         fenced = (view["reason"] in {"compacting", "just_compacted"}
@@ -908,7 +910,7 @@ class Worker:
             view, force=bool(force or fenced or not active),
         )
         if result is not None:
-            self._append_context_locked(result)
+            self._append_context_locked(result, save=save)
 
     def flush_context(self) -> None:
         """Publish the last native usage sample on the existing janitor tick."""
@@ -1619,8 +1621,11 @@ class Worker:
             if journaled:
                 self.record["evidence"] = self.evidence.state()
             self.last_activity = time.monotonic()
+            # Journal the context view before the same record save that
+            # publishes a new native terminal/compact state. A later ordinary
+            # read-only compact-status call must not race a second record write.
+            self._publish_context_locked(force=completed_turn, save=False)
             self._save()
-            self._publish_context_locked(force=completed_turn)
 
         if completed_turn:
             # The native notification was admitted as this worker's exact
@@ -2325,8 +2330,8 @@ class Worker:
                 self.record["lifecycle"]["since"] = started_at
                 # Native submission is impossible until its exact durable
                 # marker and earlier global submitted intent both exist.
+                self._publish_context_locked(force=True, save=False)
                 self._save()
-                self._publish_context_locked(force=True)
             try:
                 self.client.request(
                     "thread/compact/start", {"threadId": thread_id}, timeout=1.5,
@@ -2344,8 +2349,8 @@ class Worker:
                             self.record["activeCompact"] = None
                             self.record["lifecycle"]["state"] = "idle"
                             self.record["lifecycle"]["since"] = now_ms()
+                            self._publish_context_locked(force=True, save=False)
                             self._save()
-                            self._publish_context_locked(force=True)
                     return acknowledged(
                         started_at, accepted=False, reason=str(error),
                     )
