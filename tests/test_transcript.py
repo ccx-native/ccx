@@ -954,30 +954,6 @@ def test_background_task_summary_counts():
         "background_task_count": 0, "running_background_task_count": 0}
 
 
-def test_stop_record_summary_uses_current_tasks_and_monitor_expiry():
-    tasks = [
-        {"kind": "bash", "status": "running", "last_open_offset": 50},
-        {"kind": "bash", "status": "running", "last_open_offset": 200},
-        {"kind": "monitor", "task_id": "mon1", "status": "running",
-         "last_open_offset": 300, "launched_at": 1000, "timeout_ms": 60000},
-        {"kind": "monitor", "task_id": "mon2", "status": "running",
-         "last_open_offset": 301, "launched_at": None, "timeout_ms": None},
-        {"kind": "subagent", "status": "running", "last_open_offset": 400},
-        {"kind": "subagent", "status": "completed", "last_open_offset": 500},
-    ]
-    snapshot = T.running_background_task_summary(tasks, 100, 2000)
-    assert snapshot == {
-        "runningCount": 4, "kinds": {"bash": 1, "monitor": 2, "subagent": 1},
-        "monitors": [{"taskId": "mon1", "expiresAtMs": 61000},
-                     {"taskId": "mon2", "expiresAtMs": None}],
-        "asOfMs": 2000,
-    }
-    # Old-native running tasks do not count, even when their transcript status
-    # is still open. The source task dictionaries are not mutated.
-    assert tasks[0]["status"] == "running"
-    assert T.running_background_task_summary([], None, 2000)["runningCount"] == 0
-
-
 def test_background_task_native_boundary_and_open_offset_are_conservative(tmp_path):
     p = tmp_path / "native.jsonl"
     p.write_bytes(b"first\nsecond\n")

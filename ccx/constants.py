@@ -69,14 +69,6 @@ SELF_WORKER_ID_ENV = "CCX_SELF_WORKER_ID"
 SELF_ENGINE_ENV = "CCX_SELF_ENGINE"
 SELF_SHORT_ENV = "CCX_SELF_SHORT"  # historical, refused by new runtime
 DEFAULT_IDLE_TIMEOUT_S = 30 * 60      # 30 minutes
-# A worker sitting IDLE while a `Bash(run_in_background)` process or Monitor
-# keeps running would otherwise be reaped by the idle-killer at
-# DEFAULT_IDLE_TIMEOUT_S, taking the process tree down with it. Background work
-# and monitors can legitimately run for days, so the killer holds off entirely
-# while any bg task is still running (no cap) — this is how often it re-parses
-# the transcript to recheck, once past the idle threshold. Cheap because it only
-# runs while a worker is already idle-overdue.
-BG_IDLE_RECHECK_S = 60.0
 # Boot watchdog: a worker leaves S.BOOTING only on a SessionStart hook. If Claude
 # blocks before that (e.g. an un-pre-seeded --add-dir trust dialog or onboarding
 # gate) no hook ever fires and the idle-killer — gated on S.IDLE — never reaps it,

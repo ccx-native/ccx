@@ -1522,33 +1522,6 @@ def background_task_current(task: dict, native_start: int | None) -> bool:
             or opened >= native_start)
 
 
-def running_background_task_summary(
-    tasks: list[dict], native_start: int | None, as_of_ms: int,
-) -> dict:
-    """Small Stop-time snapshot using the idle-killer's current-task predicate.
-
-    Counts reflect transcript-open tasks from this native process *at Stop*.
-    Monitor deadlines let a record-only reader disregard expired subscriptions
-    without interpreting Stop hook payloads or rescanning the transcript.
-    """
-    kinds = {"bash": 0, "monitor": 0, "subagent": 0}
-    monitors = []
-    for task in tasks:
-        if not background_task_current(task, native_start):
-            continue
-        kind = task.get("kind")
-        if kind not in kinds:
-            continue
-        kinds[kind] += 1
-        if kind == "monitor":
-            launched, timeout = task.get("launched_at"), task.get("timeout_ms")
-            expires = (launched + timeout if type(launched) is int
-                       and type(timeout) is int and timeout > 0 else None)
-            monitors.append({"taskId": task.get("task_id"), "expiresAtMs": expires})
-    return {"runningCount": sum(kinds.values()), "kinds": kinds,
-            "monitors": monitors, "asOfMs": as_of_ms}
-
-
 def _cache_miss_reason(evt: dict, usage: dict) -> dict | str | None:
     """Claude has moved cache diagnostics across versions; preserve either shape."""
     server_diag = ((usage.get("server_tool_use") or {}).get("diagnostics") or {})

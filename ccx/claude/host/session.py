@@ -72,7 +72,6 @@ from ccx.ops.steer_ops import (
 )
 from ccx.ops.semantics import KIND_ELICITATION, KIND_PERMISSION, elicitation_response_problem
 from ccx.constants import (
-    BG_IDLE_RECHECK_S,
     BOOT_TIMEOUT_S,
     INTERRUPT_CONFIRM_S,
     INTERRUPT_CONTINUED_ACTIVITY_GRACE_S,
@@ -949,6 +948,7 @@ def _run_host(args):
             except queue.Empty:
                 return None
             if error:
+                bg["failed"] = True
                 return publish_bg([], available=False) if publish else background_summary([], available=False)
             bg["reducer"], bg["offset"] = fold, offset
             bg["items"] = current_bg_items()
@@ -1759,8 +1759,8 @@ def _run_host(args):
         )
 
     def on_subagent_hook_event(event_name, data):
-        arm_background_hook(event_name, data)
         """A subagent's own hook: attributed events only, never parent state."""
+        arm_background_hook(event_name, data)
         if event_name == "PreToolUse":
             tuid = _hook_tool_use_id(data)
             if tuid is not None:
@@ -4813,7 +4813,7 @@ def _run_host(args):
                     # worker with live child work / live monitor subscriptions.
                     poll_background(force=True)
                     state["bg_idle_running"] = (
-                        bg["reducer"] is None
+                        (bg["reducer"] is None and not bg.get("failed"))
                         or any(item["status"] == "running"
                                for item in bg["items"])
                         or bool(bg["pending"]) or bg["pending_anonymous"]
