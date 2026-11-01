@@ -836,6 +836,42 @@ def read_thread(
         raise _history_failure(error, thread_id) from error
 
 
+def read_import_source(thread_id: str, *, timeout: float = 20.) -> dict:
+    """Read one external native thread's last completed-point candidate.
+
+    No stored owner is required, and this operation never resumes the source.
+    A running CCX app-server must serve it; an absent one permits one short
+    lived observer without access to the machine control socket.
+    """
+    import os
+    from ccx.codex.history import read_fork_source_point
+    if not isinstance(thread_id, str):
+        raise InvalidRequest("Codex import requires a full native thread UUID")
+    deadline = time.monotonic() + timeout
+    if observation_daemon(deadline, short=thread_id):
+        reply = daemon_call({
+            "op": "import-source-point", "threadId": thread_id,
+            "observeSeconds": remaining(deadline, timeout),
+        }, timeout=remaining(deadline, timeout), short=thread_id)
+        if not reply.get("ok"):
+            error = _served_failure(reply, "Codex import source unavailable")
+            if _is_missing_history(error):
+                raise SessionNotFound(error, short=thread_id)
+            raise SessionUnavailable(error, short=thread_id)
+        return {"thread": reply["thread"], "lastTurn": reply["lastTurn"]}
+    try:
+        with _short_lived_app_server(
+            cwd=os.getcwd(), title="CCX Codex native import source read",
+            timeout=remaining(deadline, timeout),
+            rejection_prefix="unsupported request during Codex native import",
+        ) as client:
+            return read_fork_source_point(
+                client.request, thread_id, deadline=deadline,
+            )
+    except ProtocolError as error:
+        raise _history_failure(error, thread_id) from error
+
+
 def list_thread_turns(
     thread_id: str,
     *,

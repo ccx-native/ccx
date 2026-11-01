@@ -646,8 +646,14 @@ def _peek_conversation(args, store):
 
     try:
         owner = store.resolve(args.target)
+        options = {}
+        if owner.engine == "codex" and args.since_turn is None:
+            # Only peek needs a recent tail. An explicit --since-turn keeps
+            # the complete history path for unambiguous original ordinals.
+            options["_recent_codex_turns"] = min(64, max(12, args.tail * 2 + 4))
         doc = WorkerClient().conversation(
             owner.worker, max_tool_result_bytes=None if args.full else 4096,
+            **options,
         )
         if (not isinstance(doc, dict) or doc.get("schemaVersion") != 5
                 or not isinstance(doc.get("worker"), dict)
@@ -698,6 +704,8 @@ def _peek_conversation(args, store):
         "completeness": doc["completeness"], "evidence": doc["evidence"],
         "native_artifacts": doc.get("nativeArtifacts"),
         "since_turn": args.since_turn, "turn_count": len(turns),
+        **({"history_window": doc["peekHistoryWindow"]}
+           if "peekHistoryWindow" in doc else {}),
         "last_user": users[-1] if users and not args.tools_only else None,
         "last_assistant": assistants[-1] if assistants and not args.tools_only else None,
         "tool_count": len(tools), "tools": recent_tools if not args.text_only else [],
@@ -746,7 +754,9 @@ def _peek_conversation(args, store):
             lines.append(f"tools: {len(tools)} recorded; recent " + ", ".join(names))
     else:
         for item in displayed:
-            where = f"turn {item['turn_sequence']} ordinal {item['ordinal']}"
+            where = (f"recent turn ordinal {item['ordinal']}"
+                     if item["turn_sequence"] is None
+                     else f"turn {item['turn_sequence']} ordinal {item['ordinal']}")
             kind = item["kind"]
             if kind in {"user-text", "assistant-text"}:
                 text = str(item.get("text") or "")

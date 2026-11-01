@@ -1787,7 +1787,8 @@ class WorkerClient:
 
     @contextmanager
     def _open_full_conversation(self, worker, *, max_tool_result_bytes,
-                                timeout, include_native=False):
+                                timeout, include_native=False,
+                                codex_recent_turns: int | None = None):
         """Build once from the original owner, retaining its native source until exit."""
         from ccx.codex import runtime as codex_runtime
         from ccx.codex import telemetry as codex_telemetry
@@ -1862,6 +1863,8 @@ class WorkerClient:
                             thread_id, cwd=rec["cwd"], timeout=read_budget(),
                             worker_id=owner.worker_id,
                             expected_source=store.codex_source(owner.worker),
+                            limit=codex_recent_turns,
+                            newest_first=codex_recent_turns is not None,
                         )
                     document = _conv.build_codex(
                         rec, thread, state=normalize_native_state(
@@ -1869,6 +1872,22 @@ class WorkerClient:
                         worker=owner.worker,
                         max_tool_result_bytes=max_tool_result_bytes, evidence=evidence,
                     )
+                    if (codex_recent_turns is not None
+                            and len(thread.get("turns") or []) >= codex_recent_turns):
+                        # A bounded tail cannot claim global 1-based turn numbers,
+                        # nor pretend to describe the complete native history.
+                        for turn in document["turns"]:
+                            turn["sequence"] = None
+                        complete = document["completeness"]
+                        complete["sourceLimited"] = True
+                        complete["status"] = "source-limited"
+                        complete["warnings"] = [
+                            *(complete.get("warnings") or []),
+                            f"showing only the most recent {codex_recent_turns} native turns",
+                        ]
+                        document["peekHistoryWindow"] = {
+                            "kind": "recent", "limit": codex_recent_turns,
+                        }
                     # A proven empty history is a synthetic normalization view,
                     # never evidence that a native thread/read actually occurred.
                     native_source = None if known_empty else thread
@@ -1899,7 +1918,8 @@ class WorkerClient:
             yield owner, document, native_source, native_files
 
     def conversation(self, worker, *, max_tool_result_bytes: int | None = None,
-                     timeout: float | None = None) -> dict:
+                     timeout: float | None = None,
+                     _recent_codex_turns: int | None = None) -> dict:
         """Read a normalized full history from this original full-UUID owner.
 
         Claude reads a pinned native JSONL complete-line snapshot; Codex reads
@@ -1908,7 +1928,7 @@ class WorkerClient:
         """
         with self._open_full_conversation(
             worker, max_tool_result_bytes=max_tool_result_bytes,
-            timeout=timeout,
+            timeout=timeout, codex_recent_turns=_recent_codex_turns,
         ) as (_owner, document, _native, _files):
             return document
 

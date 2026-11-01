@@ -114,15 +114,15 @@ def _require_codex_fork_ready(store, original, record: dict) -> dict:
     wid = original.worker_id
     native = record.get("native") or {}
     lineage = record.get("forkedFrom")
+    from ccx.store.store import codex_fork_lineage
+    expected_lineage = codex_fork_lineage(anchor, child_id=original.worker_id)
     activation = store.native_activation(original.worker)
     bound = activation.get("nativeBinding") or {}
     thread_id = bound.get("threadId")
     if (not isinstance(anchor, dict) or anchor.get("engine") != "codex"
             or record.get("forkAnchor") != anchor
             or not isinstance(lineage, dict)
-            or any(lineage.get(key) != anchor.get(key) for key in (
-                "engine", "sourceWorkerId", "sourceNativeThreadId", "lastTurnId",
-                "forkedAtMs"))
+            or lineage != expected_lineage
             or not isinstance(anchor.get("createArgs"), dict)
             or anchor.get("cwd") != record.get("cwd")
             or fingerprint_v2(engine="codex", cwd=anchor["cwd"],

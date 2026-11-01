@@ -182,6 +182,35 @@ def _is_canonical_worker_uuid(value: str) -> bool:
         return False
 
 
+def codex_fork_lineage(anchor: Mapping, *, child_id: str | None = None) -> dict:
+    """Project a frozen Codex native fork; external source has no CCX owner."""
+    from ccx.store.identity import InvalidTarget
+    keys = {"engine", "sourceWorkerId", "sourceNativeThreadId", "lastTurnId",
+            "cwd", "createArgs", "seed", "overrides", "forkedAtMs"}
+    if not isinstance(anchor, Mapping) or anchor.get("engine") != "codex":
+        raise CreationIndeterminate("Codex fork source identity is invalid")
+    external = anchor.get("sourceKind") == "codex-thread"
+    if set(anchor) != (keys | {"sourceKind"} if external else keys):
+        raise CreationIndeterminate("Codex fork source identity is invalid")
+    if external:
+        if anchor.get("sourceWorkerId") is not None:
+            raise CreationIndeterminate("external Codex source has no CCX worker owner")
+    else:
+        try:
+            source = canonical_worker_id(anchor.get("sourceWorkerId"))
+        except (InvalidTarget, TypeError, ValueError) as exc:
+            raise CreationIndeterminate("native Codex fork source worker ID invalid") from exc
+        if source == child_id:
+            raise CreationIndeterminate("Codex child may not fork its own worker ID")
+    lineage = {key: anchor[key] for key in (
+        "engine", "sourceWorkerId", "sourceNativeThreadId",
+        "lastTurnId", "forkedAtMs",
+    )}
+    if external:
+        lineage["sourceKind"] = "codex-thread"
+    return lineage
+
+
 def fingerprint_v2(*, engine: str, cwd: str, create_args: Mapping,
                    fork_anchor: Mapping | None = None) -> str:
     """Immutable creation spec with a frozen fork anchor.
@@ -1363,9 +1392,7 @@ class GenerationStore:
                                 create_args=anchor["createArgs"], fork_anchor=anchor,
                             ) != record.get("createSha256")
                             or not isinstance(lineage, dict)
-                            or any(lineage.get(k) != anchor.get(k) for k in (
-                                "engine", "sourceWorkerId", "sourceNativeThreadId",
-                                "lastTurnId", "forkedAtMs"))):
+                            or lineage != codex_fork_lineage(anchor, child_id=wid)):
                         raise CreationIndeterminate("Codex fork terminal original anchor mismatch")
                 self._check_original_create_intent(
                     self._owner(wid), engine="codex", worker_id=wid,
@@ -1532,9 +1559,7 @@ class GenerationStore:
                                 create_args=anchor["createArgs"], fork_anchor=anchor,
                             ) != record.get("createSha256")
                             or not isinstance(lineage, dict)
-                            or any(lineage.get(k) != anchor.get(k) for k in (
-                                "engine", "sourceWorkerId", "sourceNativeThreadId",
-                                "lastTurnId", "forkedAtMs"))):
+                            or lineage != codex_fork_lineage(anchor, child_id=wid)):
                         raise CreationIndeterminate("Codex fork terminal original anchor mismatch")
                 self._check_original_create_intent(
                     self._owner(wid), engine="codex", worker_id=wid,

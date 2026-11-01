@@ -123,3 +123,36 @@ def read_original_thread(request: Callable[..., dict], thread_id: str, *,
         raise ValueError("Codex original thread source changed before history paging")
     return fill_thread(thread, request, deadline=deadline, limit=limit,
                        newest_first=newest_first, exact_turn_id=exact_turn_id)
+
+
+def read_fork_source_point(request: Callable[..., dict], thread_id: str, *,
+                           deadline: float) -> dict:
+    """Read only an unmanaged native source's metadata and newest turn.
+
+    This is NOT worker history authorization. It never starts, resumes,
+    unarchives or mutates the native source. Admission is a separate child
+    thread/fork with its own independently verified source tag.
+    """
+    from uuid import UUID
+    if (not isinstance(thread_id, str)
+            or str(UUID(thread_id)) != thread_id):
+        raise ValueError("import needs one exact native Codex thread UUID")
+    reply = request(
+        "thread/read", {"threadId": thread_id, "includeTurns": False},
+        timeout=_remaining(deadline),
+    )
+    thread = reply.get("thread") if isinstance(reply, dict) else None
+    if not isinstance(thread, dict) or thread.get("id") != thread_id:
+        raise ValueError("Codex native import source ID is not proven")
+    page = request("thread/turns/list", {
+        "threadId": thread_id, "limit": 1,
+        "sortDirection": "desc", "itemsView": "notLoaded",
+    }, timeout=_remaining(deadline))
+    items = page.get("data") if isinstance(page, dict) else None
+    if not isinstance(items, list) or len(items) > 1:
+        raise ValueError("Codex native import source turn page malformed")
+    last = items[0] if items else None
+    if last is not None and (not isinstance(last, dict)
+                             or not isinstance(last.get("id"), str)):
+        raise ValueError("Codex native import source turn ID unavailable")
+    return {"thread": thread, "lastTurn": last}

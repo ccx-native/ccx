@@ -705,4 +705,7 @@ def public_lineage(record: dict | None) -> dict | None:
         "session_id": fork.get("sourceNativeSessionId") if engine == "claude" else None,
         "thread_id": fork.get("sourceNativeThreadId") if engine == "codex" else None,
         "forked_at_ms": fork.get("forkedAtMs"),
+        **({"source_kind": "codex-thread"}
+           if engine == "codex" and fork.get("sourceKind") == "codex-thread"
+           and fork.get("sourceWorkerId") is None else {}),
     }

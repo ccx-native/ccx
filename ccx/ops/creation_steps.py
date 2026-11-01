@@ -180,25 +180,19 @@ def prepare_worker(
     chosen = canonical_worker_id(worker_id) if worker_id is not None else mint_worker_id()
     anchor = dict(fork_anchor) if isinstance(fork_anchor, Mapping) else None
     if fork_anchor is not None and engine == "codex":
-        # Fork preparation froze the owned source thread and completed terminal turn. Never
-        # infer those provider IDs from the CCX UUID or re-read a moving source.
+        # Freeze the exact native source/terminal turn, whether its source is
+        # a CCX worker or an external native Codex thread.
         if importing or anchor is None:
             raise CreationIndeterminate("Codex fork point is not confirmed; inspect source worker")
-        from ccx.store.identity import InvalidTarget
-        try:
-            source_id = canonical_worker_id(anchor.get("sourceWorkerId"))
-        except (InvalidTarget, ValueError, TypeError) as exc:
-            raise CreationIndeterminate("native Codex fork source worker ID invalid") from exc
+        from ccx.store.store import codex_fork_lineage
+        codex_fork_lineage(anchor, child_id=chosen)
         seed = anchor.get("seed")
         seed_stats = seed.get("stats") if isinstance(seed, dict) else None
         turns = seed_stats.get("turns") if isinstance(seed_stats, dict) else None
         last_at = seed.get("lastTurnAt") if isinstance(seed, dict) else None
         last = seed.get("lastTurn") if isinstance(seed, dict) else None
         overrides = anchor.get("overrides")
-        if (set(anchor) != {"engine", "sourceWorkerId", "sourceNativeThreadId",
-                            "lastTurnId", "cwd", "createArgs", "seed", "overrides",
-                            "forkedAtMs"}
-                or anchor.get("engine") != "codex" or source_id == chosen
+        if (anchor.get("engine") != "codex"
                 or any(not isinstance(anchor.get(k), str)
                        or not 0 < len(anchor[k]) <= 256 or "\x00" in anchor[k]
                        for k in ("sourceNativeThreadId", "lastTurnId"))
@@ -357,11 +351,12 @@ def prepare_worker(
             **({"origin": "ccx-import", "importedFrom": provenance} if importing else {}),
             "createSha256": digest, "fingerprintVersion": 2,
             "forkAnchor": anchor, "createArgs": args,
-            **({"forkedFrom": {key: anchor[key] for key in (
-                ("engine", "sourceWorkerId", "sourceNativeThreadId", "lastTurnId",
-                 "forkedAtMs") if engine == "codex" else
-                ("engine", "sourceWorkerId", "sourceNativeSessionId", "resumeAt",
-                 "forkedAtMs"))}} if anchor else {}),
+            **({"forkedFrom": (
+                codex_fork_lineage(anchor, child_id=chosen) if engine == "codex"
+                else {key: anchor[key] for key in (
+                    "engine", "sourceWorkerId", "sourceNativeSessionId",
+                    "resumeAt", "forkedAtMs")}
+            )} if anchor else {}),
             **({"lastTurn": dict(anchor["seed"]["lastTurn"])}
                if anchor and engine == "codex" and "lastTurn" in anchor["seed"] else {}),
             "native": {

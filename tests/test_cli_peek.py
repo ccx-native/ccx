@@ -364,8 +364,10 @@ def test_cli_peek_reads_one_original_codex_thread_with_native_id(
     native["id"] = tid
     calls = []
 
-    def read_thread(thread_id, *, cwd, timeout, worker_id, expected_source):
+    def read_thread(thread_id, *, cwd, timeout, worker_id, expected_source,
+                    limit=None, newest_first=False):
         assert expected_source == store.codex_source(wid)
+        assert limit == 12 and newest_first is True
         calls.append((thread_id, cwd, timeout, worker_id))
         return native
 
@@ -394,3 +396,44 @@ def test_codex_background_status_cli_uses_recorded_summary(source_peek, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["statuses"][0]["background_task_summary"] == expected
     assert reads == []
+
+
+def test_codex_peek_large_history_reads_only_newest_turn_window(
+    original_codex, monkeypatch, capsys,
+):
+    """Default peek is bounded; explicit since-turn keeps original ordinal semantics."""
+    from ccx.codex import runtime as codex_runtime
+    store, _cwd, wid, tid = original_codex
+    requested = []
+    turns = [
+        {"id": f"t-{i}", "status": "completed", "itemsView": "full",
+         "items": [_user_message(f"user-{i}", f"question {i}"),
+                   {"type": "agentMessage", "id": f"answer-{i}",
+                    "text": f"reply {i}"}]}
+        for i in range(1, 21)
+    ]
+
+    def recent(thread_id, *, cwd, timeout, worker_id, expected_source,
+               limit=None, newest_first=False):
+        assert thread_id == tid and expected_source == store.codex_source(wid)
+        requested.append((limit, newest_first))
+        selected = turns[-limit:] if limit is not None else turns
+        return {"id": tid, "threadSource": expected_source,
+                "historySource": "thread/turns/list", "turns": selected}
+
+    monkeypatch.setattr(codex_runtime, "read_thread", recent)
+    cli._main(["peek", f"codex:{wid}", "--json"])
+    window = json.loads(capsys.readouterr().out)
+    assert requested == [(12, True)]
+    assert window["last_assistant"]["text"] == "reply 20"
+    assert window["history_window"] == {"kind": "recent", "limit": 12}
+    assert window["completeness"]["sourceLimited"] is True
+    assert window["last_assistant"]["turn_sequence"] is None
+    assert window["turn_count"] == 12
+
+    cli._main(["peek", f"codex:{wid}", "--since-turn", "19", "--json"])
+    full = json.loads(capsys.readouterr().out)
+    assert requested[-1] == (None, False)
+    assert full["turn_count"] == 2
+    assert full["last_assistant"]["turn_sequence"] == 20
+    assert "history_window" not in full

@@ -677,6 +677,7 @@ def _submit_original_codex_thread(daemon, worker_id: str, record: dict,
         request_params.pop("serviceName")  # Not in pinned ThreadForkParams.
         request_params["threadId"] = fork["sourceNativeThreadId"]
         request_params["lastTurnId"] = fork["lastTurnId"]
+        request_params["excludeTurns"] = True
     original = {
         "workerId": worker_id, "engine": "codex",
         "generation": store.generation,
@@ -950,7 +951,7 @@ def _observe_original_codex_thread(daemon, message: dict[str, Any]) -> dict[str,
             raise NativeEffectIndeterminate("Codex owner/create claim missing")
         fork = record.get("forkAnchor")
         if fork is not None:
-            from ccx.store.store import fingerprint_v2
+            from ccx.store.store import fingerprint_v2, codex_fork_lineage
             lineage = record.get("forkedFrom")
             if (not isinstance(fork, dict) or fork.get("engine") != "codex"
                     or fork.get("cwd") != record.get("cwd")
@@ -960,9 +961,7 @@ def _observe_original_codex_thread(daemon, message: dict[str, Any]) -> dict[str,
                         create_args=fork["createArgs"], fork_anchor=fork,
                     ) != record["createSha256"]
                     or not isinstance(lineage, dict)
-                    or any(lineage.get(k) != fork.get(k) for k in (
-                        "engine", "sourceWorkerId", "sourceNativeThreadId",
-                        "lastTurnId", "forkedAtMs"))):
+                    or lineage != codex_fork_lineage(fork, child_id=wid)):
                 raise NativeEffectIndeterminate("Codex original fork lineage/point changed")
         store._check_original_create_intent(
             original_owner, engine="codex", worker_id=wid,
@@ -1223,7 +1222,7 @@ def _original_full_uuid_native(daemon, message: dict[str, Any]) -> dict[str, Any
                 raise NativeEffectIndeterminate("original Codex create claim missing")
             fork = record.get("forkAnchor")
             if fork is not None:
-                from ccx.store.store import fingerprint_v2
+                from ccx.store.store import fingerprint_v2, codex_fork_lineage
                 lineage = record.get("forkedFrom")
                 if (not isinstance(fork, dict) or fork.get("engine") != "codex"
                         or fork.get("cwd") != record.get("cwd")
@@ -1233,9 +1232,7 @@ def _original_full_uuid_native(daemon, message: dict[str, Any]) -> dict[str, Any
                             create_args=fork["createArgs"], fork_anchor=fork,
                         ) != record["createSha256"]
                         or not isinstance(lineage, dict)
-                        or any(lineage.get(k) != fork.get(k) for k in (
-                            "engine", "sourceWorkerId", "sourceNativeThreadId",
-                            "lastTurnId", "forkedAtMs"))):
+                        or lineage != codex_fork_lineage(fork, child_id=worker_id)):
                     raise NativeEffectIndeterminate("original Codex frozen fork claim invalid")
             store._check_original_create_intent(
                 owner_entry, engine="codex", worker_id=worker_id,

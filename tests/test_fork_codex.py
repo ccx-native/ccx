@@ -257,7 +257,7 @@ def test_f2_single_fork_wire_large_reply_independent_read_and_offline_confirmed(
     assert payload["config"]["shell_environment_policy"]["set"]["ZDOTDIR"] == str(
         live_vars.codex_zdotdir_path(C))
     assert (live_vars.codex_zdotdir_path(C) / ".zshenv").is_file()
-    assert "serviceName" not in payload and "excludeTurns" not in payload
+    assert "serviceName" not in payload and payload["excludeTurns"] is True
     saved = _marker(store, token)
     assert saved["nativeMethod"] == "thread/fork" and saved["forkAnchor"] == plan["fork_anchor"]
     assert set(saved["nativeCandidate"]) == {
@@ -334,3 +334,42 @@ def test_f2_original_rejection_unknown_and_wrong_read_no_replay(frozen, monkeypa
     with pytest.raises((RuntimeError, NativeEffectIndeterminate)):
         _submit(daemon, token)
     assert len(fake.writes) <= 1
+
+
+def test_f2_external_native_thread_fork_has_no_fake_source_worker(frozen):
+    """Native-thread import forks normally while retaining no fabricated CCX owner."""
+    store, plan, _observations = frozen
+    anchor = {**plan["fork_anchor"],
+              "sourceWorkerId": None, "sourceKind": "codex-thread"}
+    child = prepare_worker(
+        store, engine="codex", cwd=plan["cwd"], worker_id=C,
+        **plan["launch"], fork_anchor=anchor,
+        created_via="import",
+    )
+    assert child.native_source == f"ccx-worker:{C}"
+    assert child.record["forkAnchor"] == anchor
+    assert child.record["forkedFrom"]["sourceWorkerId"] is None
+    assert child.record["forkedFrom"]["sourceKind"] == "codex-thread"
+    assert store._owner(C)["provenance"] == "ccx-new"
+    token = _arm(store, child)
+    fake = _FakeNative(store, token, anchor, huge_history=True)
+    daemon = _daemon(store, fake)
+    submitted = _submit(daemon, token)
+    assert submitted["ok"] and submitted["queued"]
+    assert len(fake.writes) == 1
+    assert fake.writes[0][0] == "thread/fork"
+    assert fake.writes[0][1]["excludeTurns"] is True
+    assert fake.writes[0][1]["threadSource"] == f"ccx-worker:{C}"
+    observed = daemon._observe_original_codex_thread(
+        {"workerId": C, "submissionId": token}
+    )
+    confirmed = reconcile_submitted_native(store, child, original_receipt=observed)
+    assert confirmed.activation_state == "confirmed"
+    assert confirmed.record["native"]["threadSource"] == f"ccx-worker:{C}"
+    assert store.codex_source(C) == f"ccx-worker:{C}"
+    lineage = forking.public_lineage(confirmed.record)
+    assert lineage["worker"] is None and lineage["worker_id"] is None
+    assert lineage["short"] is None
+    assert lineage["thread_id"] == _SOURCE_THREAD
+    assert lineage["source_kind"] == "codex-thread"
+    assert store.record(B)["native"]["threadId"] == _SOURCE_THREAD

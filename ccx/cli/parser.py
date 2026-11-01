@@ -847,14 +847,20 @@ def _add_inventory_parsers(sub) -> None:
 
     pi = sub.add_parser(
         "import",
-        help="Turn an interactive Claude session into a CCX worker.",
+        help="Import a Claude session or copy a Codex thread into a CCX worker.",
         description=(
-            "Restart an idle interactive Claude Code session as a CCX worker, "
-            "keeping its history. It runs with full permissions; stop using the "
-            "session in its old terminal. Background agents can't be imported."
+            "Claude: resume an idle interactive session as a managed worker; stop "
+            "using the old terminal. Codex: fork the last completed turn into a "
+            "new full-permission CCX worker, preserving inherited history and "
+            "leaving the original Codex thread untouched. Importing the same "
+            "Codex thread again creates another independent fork."
         ),
     )
-    pi.add_argument("session", help="The exact, full Claude session id (no names or prefixes).")
+    pi.add_argument("session", help="Exact full native Claude session or Codex thread UUID.")
+    pi.add_argument("--engine", choices=["claude", "codex"],
+                    help="Select the engine explicitly (default: detect from exact native ID).")
+    pi.add_argument("--model", help="Codex child model override.")
+    pi.add_argument("--effort", help="Codex child reasoning-effort override.")
     pi.set_defaults(func=cmd_import)
 
     pat = sub.add_parser(

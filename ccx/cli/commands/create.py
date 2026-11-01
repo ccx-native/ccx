@@ -242,8 +242,38 @@ def cmd_fork(args):
             print(f"notify: {notice['instruction']}")
 
 
+def _cmd_import_codex(args, *, source=None):
+    from ccx.ops.codex_import import import_thread
+    from ccx.errors import CreatePartialFailure
+    try:
+        result = import_thread(
+            args.session, source=source, model=getattr(args, "model", None),
+            effort=getattr(args, "effort", None),
+        )
+        print(result["worker"])
+        sys.stderr.write(
+            "[ccx] imported " + result["worker"] +
+            ": copied Codex history into a new native fork; the original "
+            "Codex thread is unchanged. Reimporting creates another fork.\n"
+        )
+    except CreatePartialFailure as error:
+        print(error.worker)
+        sys.stderr.write(
+            f"[ccx] Codex import: {error} ({error.phase}); "
+            f"worker={error.worker}; retain that worker ID, "
+            "do not replay an indeterminate native fork\n"
+        )
+        raise SystemExit(error.exit_code) from error
+    except CcxError as error:
+        sys.stderr.write(f"[ccx] Codex import: {error}\n")
+        raise SystemExit(error.exit_code) from error
+    except (OSError, ValueError) as error:
+        sys.stderr.write(f"[ccx] Codex import: native source unavailable: {error}\n")
+        raise SystemExit(EXIT_UNAVAILABLE) from error
+
+
 def cmd_import(args):
-    """Adopt one exact Claude native SID, not an unmanaged CCX record/alias."""
+    """Import an exact Claude SID, or fork an independent Codex native thread."""
     from uuid import UUID
     from ccx.claude.external import exact_import_candidate
     from ccx.store.root import require_ccx_active
@@ -252,9 +282,44 @@ def cmd_import(args):
     from ccx.errors import CreatePartialFailure, OperationConflict
 
     sid = args.session
+    if getattr(args, "engine", "claude") == "codex":
+        return _cmd_import_codex(args)
+    if getattr(args, "engine", "claude") is None:
+        # Probe exact native identities, not worker aliases or display names.
+        # An error examining one provider must not silently guess its identity.
+        from ccx.errors import SessionNotFound
+        from ccx.codex.runtime import read_import_source
+        try:
+            claude_candidate = exact_import_candidate(sid)
+        except SessionNotFound:
+            claude_candidate = None
+        except CcxError as error:
+            sys.stderr.write(f"[ccx] import: {error}\n")
+            raise SystemExit(error.exit_code) from error
+        try:
+            codex_candidate = read_import_source(sid)
+        except SessionNotFound:
+            codex_candidate = None
+        except CcxError as error:
+            if claude_candidate is None:
+                sys.stderr.write(f"[ccx] import: {error}\n")
+                raise SystemExit(error.exit_code) from error
+            codex_candidate = None
+        if claude_candidate is not None and codex_candidate is not None:
+            sys.stderr.write("[ccx] import: exact ID exists in both engines; "
+                             "choose --engine claude or --engine codex\n")
+            raise SystemExit(EXIT_ERROR)
+        if codex_candidate is not None:
+            return _cmd_import_codex(args, source=codex_candidate)
+        if claude_candidate is None:
+            sys.stderr.write(f"[ccx] import: no native session/thread for {sid}\n")
+            raise SystemExit(2)
+    if getattr(args, "model", None) is not None or getattr(args, "effort", None) is not None:
+        sys.stderr.write("[ccx] import: --model/--effort are Codex-only\n")
+        raise SystemExit(EXIT_ERROR)
     try:
         if not isinstance(sid, str) or str(UUID(sid)) != sid:
-            raise InvalidRequest("Import needs a complete Claude session ID; copy it from Claude")
+            raise InvalidRequest("Import needs a complete native session ID")
         store = require_ccx_active(constants.CCX_ROOT)
 
         def previous_owner():

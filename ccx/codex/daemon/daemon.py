@@ -848,6 +848,21 @@ class CodexDaemon:
             self.stop.set()
             return {"ok": True, "stopped": True, "workers": states,
                     "nativeStartEvidence": evidence}
+        if op == "import-source-point":
+            # Read-only unmanaged native source: no CCX worker/source binding.
+            # Never start/resume/alter the user's original thread.
+            from ccx.codex.history import read_fork_source_point
+            try:
+                if not self.ready.is_set() or self.client is None:
+                    raise RuntimeError("Codex app-server not ready")
+                source = read_fork_source_point(
+                    self.client.request, message.get("threadId"),
+                    deadline=time.monotonic() + _native_history_budget(message),
+                )
+                self._uuid_store.revalidate()
+                return {"ok": True, **source}
+            except (ValueError, RuntimeError, ProtocolError, TimeoutError, OSError) as error:
+                return {"ok": False, "error": str(error)}
         if op == "thread-history":
             from ccx.codex.history import read_original_thread
             from ccx.store.root import GenerationError
