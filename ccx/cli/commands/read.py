@@ -622,12 +622,19 @@ def _recorded_peek_pending(owner, rec: dict) -> dict:
 
 
 def _background_summary_line(summary: dict | None) -> str | None:
-    """Brief recorded Stop snapshot; not a live task poll."""
-    if not isinstance(summary, dict) or summary.get("runningCount") == 0:
+    """Brief recorded owner snapshot; never read native background sources."""
+    if not isinstance(summary, dict):
         return None
-    kinds = summary.get("kinds") or {}
-    return (f"background at last turn end: running={summary.get('runningCount')} "
-            f"bash={kinds.get('bash', 0)} monitor={kinds.get('monitor', 0)} "
+    running = summary.get("running_count", summary.get("runningCount"))
+    pending = summary.get("pending_count", 0)
+    if running == 0 and pending == 0:
+        return None
+    if summary.get("available") is False or running is None:
+        return "background: unavailable"
+    kinds = summary.get("by_kind", summary.get("kinds")) or {}
+    return (f"background: running={running} pending={pending} "
+            f"command={kinds.get('command', kinds.get('bash', 0))} "
+            f"monitor={kinds.get('monitor', 0)} "
             f"subagent={kinds.get('subagent', 0)}")
 
 
@@ -651,7 +658,7 @@ def _peek_conversation(args, store):
             raise SessionUnavailable("The conversation is incomplete; retry after the worker finishes writing")
         rec = store.record(owner.worker)
         pending = _recorded_peek_pending(owner, rec)
-        bg_summary = rec.get("backgroundTaskSummary") if owner.engine == "claude" else None
+        bg_summary = rec.get("backgroundTaskSummary")
         store.revalidate()
     except (CcxError, GenerationError, IdentityError, OSError) as exc:
         print(f"ccx peek: cannot read the conversation; check the worker: {exc}", file=sys.stderr)
@@ -846,7 +853,7 @@ def cmd_peek(args):
             "context": _status_context_for_record(owner.worker, rec),
             "forked_from": public_lineage(rec),
             **({"background_task_summary": rec["backgroundTaskSummary"]}
-               if owner.engine == "claude" and "backgroundTaskSummary" in rec else {}),
+               if "backgroundTaskSummary" in rec else {}),
         }
 
     rows, errors = [], {}

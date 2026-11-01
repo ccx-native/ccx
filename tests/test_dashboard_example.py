@@ -1550,3 +1550,28 @@ def test_background_subprocesses_never_inherit_dashboard_stdin(monkeypatch):
     tailer.set_target("claude:test")
     assert popens[0]["stdin"] == subprocess.DEVNULL
     tailer.stop()
+
+def test_background_event_updates_dashboard_snapshot_without_polling():
+    store = dash.Store()
+    store.update_statuses({"codex:owned": {
+        "worker": "codex:owned", "state": "idle",
+        "background_task_summary": {"as_of_ms": 10, "running_count": 0}
+    }}, None)
+    event = {"kind": "background.changed", "transition": "started",
+             "item": {"id": "command:one", "label": "shell"},
+             "summary": {"as_of_ms": 20, "running_count": 1, "pending_count": 0}}
+    store.update_background_event("codex:owned", event)
+    assert store.snapshot()["statuses"]["codex:owned"]["background_task_summary"] == event["summary"]
+    # An older periodic status snapshot must not revert a newer feed update.
+    store.update_statuses({"codex:owned": {
+        "worker": "codex:owned", "state": "idle",
+        "background_task_summary": {"as_of_ms": 15, "running_count": 0}
+    }}, None)
+    assert store.snapshot()["statuses"]["codex:owned"]["background_task_summary"] == event["summary"]
+    # Authoritative newer status replaces stale event overlay.
+    store.update_statuses({"codex:owned": {
+        "worker": "codex:owned", "state": "idle",
+        "background_task_summary": {"as_of_ms": 30, "running_count": 0}
+    }}, None)
+    assert store.snapshot()["statuses"]["codex:owned"]["background_task_summary"]["running_count"] == 0
+    assert "background started: shell" in dash.App.fmt_event(event)

@@ -182,9 +182,16 @@ def _background_task_block_for_worker(store, owner) -> dict:
     """Bound the original background-task facts for facade wait and report."""
     from ccx.ops.common import background_task_block
 
+    rec = store.record(owner.worker)  # mandatory owner/record evidence stays strict
+    recorded = rec.get("backgroundTaskSummary")
+    if isinstance(recorded, dict):
+        return background_task_block({
+            "background_task_summary": recorded,
+            "running_background_task_count": recorded.get("running_count",
+                                                     recorded.get("runningCount")),
+        }, supported=True)
     if owner.engine != "claude":
         return background_task_block(None, supported=False)
-    rec = store.record(owner.worker)  # mandatory owner/record evidence stays strict
     try:
         facts = CcxClient._uuid_background_task_facts_owned(store, owner, rec)
     except (SessionUnavailable, OSError) as exc:
@@ -745,7 +752,7 @@ class WorkerClient:
             "record_revision":rec.get("recordRevision"),
             "context": commands_read._status_context_for_record(owner.worker, rec),
             **({"background_task_summary": rec["backgroundTaskSummary"]}
-               if owner.engine == "claude" and "backgroundTaskSummary" in rec else {}),
+               if "backgroundTaskSummary" in rec else {}),
         }
 
     def list(self, *, engine: str | None = None, cwd: str | None = None,

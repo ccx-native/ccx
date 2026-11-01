@@ -44,7 +44,8 @@ def test_recorded_snapshot_in_existing_background_rpc_block(originals):
     row = _inspect(store, A)["result"]["worker_view"]["background_tasks"]
     assert row["summary"] == summary
     assert row["running_count"] == 1
-    assert row["tasks"][0]["task_id"] == "task-1"
+    # Ordinary RPC inspect uses the recorded snapshot, not a transcript scan.
+    assert row["tasks"] == []
     assert WorkerClient().status(A)["background_task_summary"] == summary
 
 
@@ -266,3 +267,21 @@ def test_codex_unsupported_and_root_free_capabilities_no_new_operations(
         assert rejected["ok"] is False
         assert rejected["error"]["code"] == "invalid_request"
     assert not (store.root / "run").exists()
+
+def test_codex_background_record_status_and_rpc_inspect(originals):
+    from ccx.ops.background import summary
+    from test_generation_store import add_worker, C
+
+    store, *_ = originals
+    add_worker(store.root, C, "codex")
+    expected = summary([{
+        "id": "command:exec-test", "kind": "command",
+        "status": "running", "label": "native shell",
+    }], as_of_ms=1793548540000)
+    store.mutate_record(C, patches={"backgroundTaskSummary": expected})
+    assert WorkerClient().status(C)["background_task_summary"] == expected
+    block = _inspect(store, C)["result"]["worker_view"]["background_tasks"]
+    assert block["supported"] is True
+    assert block["running_count"] == 1
+    assert block["summary"] == expected
+    assert block["tasks"] == []  # recorded, never native thread/read

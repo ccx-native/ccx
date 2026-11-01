@@ -211,11 +211,20 @@ def recorded_inspector(store, target: str) -> dict[str, Any]:
 
     owner = store.resolve(target)
     rec = store.record(owner.worker)
-    facts = (CcxClient._uuid_background_task_facts_owned(store, owner, rec)
-             if owner.engine == "claude" else None)
-    if facts is not None and "backgroundTaskSummary" in rec:
-        facts["background_task_summary"] = rec["backgroundTaskSummary"]
-    background = background_task_block(facts, supported=owner.engine == "claude")
+    snapshot = rec.get("backgroundTaskSummary")
+    if isinstance(snapshot, dict):
+        facts = {
+            "background_task_summary": snapshot,
+            "running_background_task_count": snapshot.get("running_count",
+                                                     snapshot.get("runningCount")),
+        }
+        background = background_task_block(facts, supported=True)
+    else:
+        # Historical Claude inspection can still use the explicit diagnostic
+        # extractor; the normal recorded owner snapshot is preferred.
+        facts = (CcxClient._uuid_background_task_facts_owned(store, owner, rec)
+                 if owner.engine == "claude" else None)
+        background = background_task_block(facts, supported=owner.engine == "claude")
     lifecycle = rec.get("lifecycle")
     lifecycle = lifecycle if isinstance(lifecycle, dict) else {}
     native = rec.get("native")

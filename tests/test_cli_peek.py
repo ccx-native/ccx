@@ -213,32 +213,33 @@ def test_recorded_background_snapshot_surfaces_without_task_scan(source_peek, ca
     from ccx import CcxClient
     root, doc, reads = source_peek
     store = require_ccx_active(root)
-    summary = {"asOfMs": 12345, "runningCount": 2,
-               "kinds": {"bash": 1, "monitor": 1, "subagent": 0},
-               "monitors": [{"taskId": "mon", "expiresAtMs": 99999}]}
+    from ccx.ops.background import summary as make_summary
+    summary = make_summary([
+        {"id": "command:one", "kind": "command", "status": "running", "label": "one"},
+        {"id": "monitor:mon", "kind": "monitor", "status": "running",
+         "label": "mon", "expires_at_ms": 99999},
+    ], as_of_ms=12345)
     store.mutate_record(A, patches={"backgroundTaskSummary": summary})
 
     cli._main(["peek", A, "--status", "--json"])
     assert json.loads(capsys.readouterr().out)["statuses"][0]["background_task_summary"] == summary
     assert reads == []
     cli._main(["peek", A, "--status"])
-    assert "background at last turn end: running=2 bash=1 monitor=1 subagent=0" in capsys.readouterr().out
+    assert "background: running=2 pending=0 command=1 monitor=1 subagent=0" in capsys.readouterr().out
 
     doc["worker"]["handle"] = "claude:" + A
     cli._main(["peek", A, "--json"])
     assert json.loads(capsys.readouterr().out)["background_task_summary"] == summary
     cli._main(["peek", A, "--brief"])
-    assert "background at last turn end: running=2" in capsys.readouterr().out
+    assert "background: running=2" in capsys.readouterr().out
 
     assert CcxClient().peek(A).background_task_summary == summary
     assert CcxClient().status([A])[0].as_dict()["background_task_summary"] == summary
     assert WorkerClient().status(A)["background_task_summary"] == summary
 
-    store.mutate_record(A, patches={"backgroundTaskSummary": {**summary, "runningCount": 0,
-                                                              "kinds": {"bash": 0, "monitor": 0, "subagent": 0},
-                                                              "monitors": []}})
+    store.mutate_record(A, patches={"backgroundTaskSummary": make_summary([], as_of_ms=12346)})
     cli._main(["peek", A, "--status"])
-    assert "background at last turn end" not in capsys.readouterr().out
+    assert "background: running" not in capsys.readouterr().out
 
 
 def test_peek_status_preserves_codex_original_brokered_gate(source_peek, capsys):
@@ -379,3 +380,17 @@ def test_cli_peek_reads_one_original_codex_thread_with_native_id(
     assert value["tools"][0]["result"]["content"] == "fake output"
     assert calls == [(tid, str(cwd), 120, wid)]
     assert not (store.root / "sessions").exists()
+
+def test_codex_background_status_cli_uses_recorded_summary(source_peek, capsys):
+    from ccx.ops.background import summary as make_summary
+    root, _, reads = source_peek
+    store = require_ccx_active(root)
+    expected = make_summary([{
+        "id": "command:exec-one", "kind": "command",
+        "status": "running", "label": "native command",
+    }], as_of_ms=1793548540000)
+    store.mutate_record(B, patches={"backgroundTaskSummary": expected})
+    cli._main(["peek", B, "--status", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["statuses"][0]["background_task_summary"] == expected
+    assert reads == []

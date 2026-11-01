@@ -376,6 +376,7 @@ class Store:
         self._lock = threading.Lock()
         self.sessions: list[dict] = []
         self.statuses: dict[str, dict] = {}
+        self._background_events: dict[str, dict] = {}
         self.statuses_error: str | None = None
         self.usage: dict[str, dict] = {}  # only successfully fetched engines
         self.usage_engines: tuple[str, ...] = ()
@@ -399,11 +400,40 @@ class Store:
         with self._lock:
             if statuses is not None:
                 self.statuses = statuses
+                for worker, event_summary in list(self._background_events.items()):
+                    status = self.statuses.get(worker)
+                    if not isinstance(status, dict):
+                        continue
+                    recorded = status.get("background_task_summary") or {}
+                    if (int(recorded.get("as_of_ms") or 0)
+                            >= int(event_summary.get("as_of_ms") or 0)):
+                        del self._background_events[worker]
+                    else:
+                        self.statuses[worker] = {
+                            **status, "background_task_summary": event_summary,
+                        }
             else:
                 # A failed batch is not actionable evidence: never keep an old
                 # permission/question request ID on the visible rows.
                 self.statuses = {}
             self.statuses_error = error
+
+    def update_background_event(self, worker: str, event: dict) -> None:
+        """Apply the complete owner event snapshot to the selected worker."""
+        if event.get("kind") != "background.changed":
+            return
+        bg = event.get("summary")
+        if not isinstance(bg, dict):
+            return
+        with self._lock:
+            current = self.statuses.get(worker)
+            if not isinstance(current, dict):
+                return
+            previous = current.get("background_task_summary") or {}
+            if int(bg.get("as_of_ms") or 0) < int(previous.get("as_of_ms") or 0):
+                return
+            self._background_events[worker] = bg
+            self.statuses[worker] = {**current, "background_task_summary": bg}
 
     def set_usage_engines(self, engines):
         with self._lock:
@@ -634,9 +664,10 @@ class StreamTailer:
     most recent. Restarts when the focus changes; the feed keeps following a
     stopped worker, and heartbeat lines are skipped."""
 
-    def __init__(self, ccx_bin: str, popen=None):
+    def __init__(self, ccx_bin: str, popen=None, on_event=None):
         self.ccx_bin = ccx_bin
         self._lock = threading.Lock()
+        self._on_event = on_event
         self.short: str | None = None
         self.events: deque = deque(maxlen=200)
         self._proc: subprocess.Popen | None = None
@@ -678,6 +709,11 @@ class StreamTailer:
                     # inject stale events from the previous session into the new one.
                     if self.events is target_events:
                         self.events.append(evt)
+                        event_worker = self.short
+                    else:
+                        event_worker = None
+                if event_worker is not None and self._on_event is not None:
+                    self._on_event(event_worker, evt)
         except (OSError, ValueError):
             pass
 
@@ -880,7 +916,8 @@ class App:
         self.poller = Poller(ccx_bin, self.store)
         self.poller.set_scope(scope)
         self.peeker = ConversationWorker(ccx_bin, self.store)
-        self.streamer = StreamTailer(ccx_bin)
+        self.streamer = StreamTailer(
+            ccx_bin, on_event=self.store.update_background_event)
 
         self.scope = scope
         self.sort = "state"
@@ -1047,10 +1084,9 @@ class App:
             (status or {}).get("turn", (sel or {}).get("turns")),
             (status or {}).get("record_revision"),
         ) if focus else None)
-        streamable = bool(
-            sel and sel.get("state") in LIVE_STATES
-        )
-        self.streamer.set_target(focus if (self.show_events and streamable) else None)
+        # The existing focused-worker follower also owns the background
+        # cards. A model-idle Codex worker can still run native terminals.
+        self.streamer.set_target(focus if sel else None)
 
         self.draw_header(snap, w)
 
@@ -1255,8 +1291,17 @@ class App:
         elif gate:
             raw = (status or {}).get("waiting_for") or {}
             detail = " · " + clean(raw.get("tool") or raw.get("message"), 40)
+        bg = (status or {}).get("background_task_summary") or {}
+        if bg.get("available") is False:
+            bg_text = " · bg unavailable"
+        elif bg.get("running_count") is not None:
+            bg_text = (f" · bg {bg['running_count']} running,"
+                       f" {bg.get('pending_count', 0)} pending")
+        else:
+            bg_text = ""
         header = (f" {state} · turn {turn if turn is not None else '—'} · "
-                  f"ctx {fmt_tokens(context_tokens(status))} · pending: {pending}{detail}")
+                  f"ctx {fmt_tokens(context_tokens(status))} · pending: {pending}"
+                  f"{bg_text}{detail}")
         self.put(top + 1, 1, header, self.attr(C_MAGENTA) if gate else curses.A_DIM)
         y, bottom = top + 2, top + height
         self.detail_page_rows = max(1, bottom - y)
@@ -1301,6 +1346,13 @@ class App:
         kind = evt.get("kind") or evt.get("type") or "?"
         if kind == "state":
             return f"state: {evt.get('from')} → {evt.get('to')}"
+        if kind == "background.changed":
+            item = evt.get("item") or {}
+            bg = evt.get("summary") or {}
+            return (f"background {evt.get('transition') or 'changed'}: "
+                    f"{item.get('label') or item.get('id') or 'snapshot'} "
+                    f"· running={bg.get('running_count', '?')} "
+                    f"pending={bg.get('pending_count', '?')}")
         if kind == "turn.ended":
             return f"turn ended: {evt.get('outcome') or evt.get('turn_ref') or '?'}"
         if kind == "turn.started":
