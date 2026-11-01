@@ -2843,3 +2843,44 @@ def test_v2_context_observation_ignores_synthetic_model_and_zero_usage(tmp_path,
     assert observed["observedModel"] == "real-native-observed"
     assert observed["context"]["state"] == "known"
     assert observed["context"]["tokens_used"] == 42
+
+def test_background_reducer_incremental_monitor_event_and_terminal(tmp_path):
+    """A combined Monitor event and completed status is not silently lost."""
+    events = _monitor_launch_events()
+    done = _monitor_terminal_notification(
+        status="completed", summary="watch ended")
+    done["content"] = done["content"].replace(
+        "<status>completed</status>",
+        "<status>completed</status><event>build completed</event>")
+    events.append(done)
+    p = tmp_path / "s.jsonl"
+    _write_bg_jsonl(p, events)
+    [task] = T.extract_background_tasks(p)
+    assert (task["status"], task["event_count"], task["last_event"]) == (
+        "completed", 1, "build completed")
+    reducer = T.BackgroundTaskReducer()
+    for event in T._iter_transcript(p):
+        reducer.feed(event)
+    assert reducer.tasks() == T.extract_background_tasks(p)
+
+
+def test_background_append_ignores_partial_and_reuses_state(tmp_path):
+    p = tmp_path / "s.jsonl"
+    source = _bg_launch_events() + [_bg_notification_event()]
+    first = b"".join((json.dumps(evt) + "\n").encode() for evt in source[:2])
+    last = (json.dumps(source[2]) + "\n").encode()
+    p.write_bytes(first + last[:17])
+    reducer = T.BackgroundTaskReducer()
+    records, cursor = T.read_background_append(p, 0)
+    assert len(records) == 2 and cursor == len(first)
+    for evt in records:
+        reducer.feed(evt)
+    assert reducer.tasks()[0]["status"] == "running"
+    with p.open("ab") as out:
+        out.write(last[17:])
+    records, cursor = T.read_background_append(p, cursor)
+    assert len(records) == 1 and cursor == p.stat().st_size
+    for evt in records:
+        reducer.feed(evt)
+    assert reducer.tasks()[0]["status"] == "completed"
+    assert T.read_background_append(p, cursor) == ([], cursor)

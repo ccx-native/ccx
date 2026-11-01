@@ -1089,16 +1089,36 @@ def extract_background_tasks(transcript_path: str | pathlib.Path) -> list[dict]:
     across raw files, an open prior task may remain transcript-running until
     higher-level liveness marks it stale.
     Returns [] when no background tasks (or no transcript) are present."""
-    events = list(_iter_transcript(transcript_path))
-    candidates: dict[str, dict] = {}    # possible launch tool_use_id -> facts
-    launches: dict[str, dict] = {}      # proven launch tool_use_id -> facts
-    results: dict[str, dict] = {}       # launch tool_use_id -> task result facts
-    stop_requests: dict[str, str] = {}  # TaskStop tool_use_id -> requested task id
-    resume_requests: set[str] = set()   # SendMessage tool_use_ids
-    # Terminal, Monitor-event and reopen evidence, appended in transcript order.
-    evidence: list[dict] = []
+    reducer = BackgroundTaskReducer()
+    for event in _iter_transcript(transcript_path):
+        reducer.feed(event)
+    return reducer.tasks()
 
-    for evt in events:
+
+class BackgroundTaskReducer:
+    """Transcript-only task fold: ingest appended rows, snapshot current tasks.
+
+    Both historical extraction and the host incremental tail use this one
+    parser. Candidate/results/evidence maps persist; materializing a snapshot
+    folds only task evidence, never unrelated transcript history.
+    """
+
+    def __init__(self):
+        self.candidates: dict[str, dict] = {}    # possible launch tool_use_id -> facts
+        self.launches: dict[str, dict] = {}      # proven launch tool_use_id -> facts
+        self.results: dict[str, dict] = {}       # launch tool_use_id -> task result facts
+        self.stop_requests: dict[str, str] = {}  # TaskStop tool_use_id -> requested task id
+        self.resume_requests: set[str] = set()   # SendMessage tool_use_ids
+        # Terminal, Monitor-event and reopen evidence, appended in transcript order.
+        self.evidence: list[dict] = []
+
+    def feed(self, evt: dict) -> None:
+        candidates = self.candidates
+        launches = self.launches
+        results = self.results
+        stop_requests = self.stop_requests
+        resume_requests = self.resume_requests
+        evidence = self.evidence
         t = evt.get("type")
         ts = _parse_event_ts_ms(evt)
         if t == "assistant":
@@ -1145,7 +1165,7 @@ def extract_background_tasks(transcript_path: str | pathlib.Path) -> list[dict]:
             msg = evt.get("message") or {}
             content = msg.get("content")
             if not isinstance(content, list):
-                continue
+                return
             tool_results = [c for c in content
                             if isinstance(c, dict) and c.get("type") == "tool_result"]
             tur = evt.get("toolUseResult")
@@ -1283,128 +1303,176 @@ def extract_background_tasks(transcript_path: str | pathlib.Path) -> list[dict]:
                         "last_open_offset": evt.get("_ccx_start_offset"),
                     })
 
-    # Task identity: launch tool_use_id, with its task id as the pairing key.
-    # A resume of an agent never launched in this transcript is still live
-    # work; it becomes a task keyed by the resuming SendMessage.
-    task_keys = set(launches) | set(results)
-    launches_by_task: dict[str, list[str]] = {}
-    for tid in sorted(task_keys):
-        task_id = (results.get(tid) or {}).get("task_id")
-        if task_id:
-            launches_by_task.setdefault(task_id, []).append(tid)
-    for rec in evidence:
-        if rec.get("reopen") and rec["task_id"] not in launches_by_task:
-            tid = rec["tool_use_id"]
-            launches[tid] = {
+    def tasks(self) -> list[dict]:
+        candidates = self.candidates
+        launches = self.launches
+        results = self.results
+        stop_requests = self.stop_requests
+        resume_requests = self.resume_requests
+        evidence = self.evidence
+        # Task identity: launch tool_use_id, with its task id as the pairing key.
+        # A resume of an agent never launched in this transcript is still live
+        # work; it becomes a task keyed by the resuming SendMessage.
+        task_keys = set(launches) | set(results)
+        launches_by_task: dict[str, list[str]] = {}
+        for tid in sorted(task_keys):
+            task_id = (results.get(tid) or {}).get("task_id")
+            if task_id:
+                launches_by_task.setdefault(task_id, []).append(tid)
+        for rec in evidence:
+            if rec.get("reopen") and rec["task_id"] not in launches_by_task:
+                tid = rec["tool_use_id"]
+                launches[tid] = {
+                    "tool_use_id": tid,
+                    "kind": "subagent",
+                    "launched_at": rec.get("reopened_at"),
+                    "last_open_offset": rec.get("last_open_offset"),
+                }
+                results[tid] = {"task_id": rec["task_id"]}
+                launches_by_task[rec["task_id"]] = [tid]
+                task_keys.add(tid)
+
+        def _evidence_targets(rec: dict) -> list[str]:
+            task_id = rec.get("task_id")
+            if task_id and task_id in launches_by_task:
+                return launches_by_task[task_id]
+            tool_use_id = rec.get("tool_use_id")
+            if tool_use_id in task_keys:
+                launched_id = (results.get(tool_use_id) or {}).get("task_id")
+                # Never let a tool-use id contradict the task id it launched.
+                if not (task_id and launched_id and task_id != launched_id):
+                    return [tool_use_id]
+            return []
+
+        evidence_by_launch: dict[str, list[dict]] = {}
+        for rec in evidence:
+            for target in _evidence_targets(rec):
+                evidence_by_launch.setdefault(target, []).append(rec)
+
+        tasks: list[dict] = []
+        for tid in sorted(task_keys):
+            launch = launches.get(tid) or {}
+            res = results.get(tid) or {}
+            kind = launch.get("kind") or "bash"
+            task_id = res.get("task_id")
+
+            output_file = res.get("output_file")
+            last_open_offset = res.get("last_open_offset", launch.get("last_open_offset"))
+            terminal = None
+            event_count = 0
+            last_event = last_event_at = None
+            superseded: set[str] = set()  # earlier invocations of a resumed agent
+            invocation = tid
+            for rec in evidence_by_launch.get(tid, []):
+                if rec.get("reopen"):
+                    if kind == "subagent":
+                        superseded.add(invocation)
+                        invocation = rec["tool_use_id"]
+                        terminal = None
+                        last_open_offset = rec.get("last_open_offset", last_open_offset)
+                    continue
+                ev_text = rec.get("event")
+                if ev_text is not None:
+                    event_count += 1
+                    if kind == "monitor" and terminal is None:
+                        last_open_offset = rec.get("last_open_offset", last_open_offset)
+                    last_event = _clip_task_event(ev_text)
+                    last_event_at = rec.get("completed_at")
+                    if kind == "monitor" and ev_text.startswith(
+                        ("[Monitor expired", "[Monitor timed out")
+                    ):
+                        terminal = {**rec, "status": _BG_STATUS_STOPPED,
+                                    "summary": _clip_task_event(ev_text)}
+                    if rec.get("status") is None:
+                        continue
+                if rec.get("tool_use_id") in superseded:
+                    continue
+                if _task_terminal_status(rec.get("status"), rec.get("exit_code")):
+                    terminal = rec
+
+            exit_code = completed_at = summary = None
+            if terminal:
+                exit_code = terminal.get("exit_code")
+                status = _task_terminal_status(terminal.get("status"), exit_code) or _BG_STATUS_UNKNOWN
+                completed_at = terminal.get("completed_at")
+                summary = terminal.get("summary")
+                output_file = output_file or terminal.get("output_file")
+                task_id = task_id or terminal.get("task_id")
+            else:
+                status = _BG_STATUS_RUNNING
+
+            task = {
+                "task_id": task_id,
                 "tool_use_id": tid,
-                "kind": "subagent",
-                "launched_at": rec.get("reopened_at"),
-                "last_open_offset": rec.get("last_open_offset"),
+                "kind": kind,
+                "command": launch.get("command") or (terminal or {}).get("command"),
+                "description": launch.get("description") or res.get("description"),
+                "output_file": output_file,
+                "status": status,
+                "exit_code": exit_code,
+                "summary": summary,
+                "launched_at": launch.get("launched_at"),
+                "completed_at": completed_at,
+                "last_open_offset": last_open_offset,
             }
-            results[tid] = {"task_id": rec["task_id"]}
-            launches_by_task[rec["task_id"]] = [tid]
-            task_keys.add(tid)
+            if kind == "monitor":
+                task["persistent"] = (
+                    res.get("persistent")
+                    if res.get("persistent") is not None
+                    else launch.get("persistent")
+                )
+                task["timeout_ms"] = (
+                    res.get("timeout_ms")
+                    if res.get("timeout_ms") is not None
+                    else launch.get("timeout_ms")
+                )
+                task["event_count"] = event_count
+                task["last_event"] = last_event
+                task["last_event_at"] = last_event_at
+            tasks.append(task)
 
-    def _evidence_targets(rec: dict) -> list[str]:
-        task_id = rec.get("task_id")
-        if task_id and task_id in launches_by_task:
-            return launches_by_task[task_id]
-        tool_use_id = rec.get("tool_use_id")
-        if tool_use_id in task_keys:
-            launched_id = (results.get(tool_use_id) or {}).get("task_id")
-            # Never let a tool-use id contradict the task id it launched.
-            if not (task_id and launched_id and task_id != launched_id):
-                return [tool_use_id]
-        return []
+        tasks.sort(key=lambda t: (t.get("launched_at") or 0, t.get("tool_use_id") or ""))
+        return tasks
 
-    evidence_by_launch: dict[str, list[dict]] = {}
-    for rec in evidence:
-        for target in _evidence_targets(rec):
-            evidence_by_launch.setdefault(target, []).append(rec)
 
-    tasks: list[dict] = []
-    for tid in sorted(task_keys):
-        launch = launches.get(tid) or {}
-        res = results.get(tid) or {}
-        kind = launch.get("kind") or "bash"
-        task_id = res.get("task_id")
+def read_background_append(
+    path: str | pathlib.Path | PinnedNativeSource,
+    offset: int,
+    *,
+    max_bytes: int = 2 * 1024 * 1024,
+) -> tuple[list[dict], int]:
+    """Read only complete newly appended JSONL rows, returning the safe cursor.
 
-        output_file = res.get("output_file")
-        last_open_offset = res.get("last_open_offset", launch.get("last_open_offset"))
-        terminal = None
-        event_count = 0
-        last_event = last_event_at = None
-        superseded: set[str] = set()  # earlier invocations of a resumed agent
-        invocation = tid
-        for rec in evidence_by_launch.get(tid, []):
-            if rec.get("reopen"):
-                if kind == "subagent":
-                    superseded.add(invocation)
-                    invocation = rec["tool_use_id"]
-                    terminal = None
-                    last_open_offset = rec.get("last_open_offset", last_open_offset)
-                continue
-            ev_text = rec.get("event")
-            if ev_text is not None and rec.get("status") is None:
-                event_count += 1
-                if kind == "monitor" and terminal is None:
-                    last_open_offset = rec.get("last_open_offset", last_open_offset)
-                last_event = _clip_task_event(ev_text)
-                last_event_at = rec.get("completed_at")
-                if kind == "monitor" and ev_text.startswith(
-                    ("[Monitor expired", "[Monitor timed out")
-                ):
-                    terminal = {**rec, "status": _BG_STATUS_STOPPED,
-                                "summary": _clip_task_event(ev_text)}
-                continue
-            if rec.get("tool_use_id") in superseded:
-                continue
-            if _task_terminal_status(rec.get("status"), rec.get("exit_code")):
-                terminal = rec
-
-        exit_code = completed_at = summary = None
-        if terminal:
-            exit_code = terminal.get("exit_code")
-            status = _task_terminal_status(terminal.get("status"), exit_code) or _BG_STATUS_UNKNOWN
-            completed_at = terminal.get("completed_at")
-            summary = terminal.get("summary")
-            output_file = output_file or terminal.get("output_file")
-            task_id = task_id or terminal.get("task_id")
-        else:
-            status = _BG_STATUS_RUNNING
-
-        task = {
-            "task_id": task_id,
-            "tool_use_id": tid,
-            "kind": kind,
-            "command": launch.get("command") or (terminal or {}).get("command"),
-            "description": launch.get("description") or res.get("description"),
-            "output_file": output_file,
-            "status": status,
-            "exit_code": exit_code,
-            "summary": summary,
-            "launched_at": launch.get("launched_at"),
-            "completed_at": completed_at,
-            "last_open_offset": last_open_offset,
-        }
-        if kind == "monitor":
-            task["persistent"] = (
-                res.get("persistent")
-                if res.get("persistent") is not None
-                else launch.get("persistent")
-            )
-            task["timeout_ms"] = (
-                res.get("timeout_ms")
-                if res.get("timeout_ms") is not None
-                else launch.get("timeout_ms")
-            )
-            task["event_count"] = event_count
-            task["last_event"] = last_event
-            task["last_event_at"] = last_event_at
-        tasks.append(task)
-
-    tasks.sort(key=lambda t: (t.get("launched_at") or 0, t.get("tool_use_id") or ""))
-    return tasks
+    The final partial line is left for the next host tick. PinnedNativeSource
+    uses pread, so this never disturbs any other reader's transcript offset.
+    """
+    size = path.size() if isinstance(path, PinnedNativeSource) else pathlib.Path(path).stat().st_size
+    if offset < 0 or offset > size:
+        raise ValueError("background transcript changed beneath append cursor")
+    if offset == size:
+        return [], offset
+    reader = (path.open_reader() if isinstance(path, PinnedNativeSource)
+              else open(path, "rb"))
+    with reader as stream:
+        stream.seek(offset)
+        chunk = stream.read(min(max_bytes, size - offset))
+    end = chunk.rfind(b"\n")
+    if end < 0:
+        return [], offset
+    rows: list[dict] = []
+    start = offset
+    for line in chunk[:end + 1].splitlines(keepends=True):
+        next_offset = start + len(line)
+        try:
+            event = json.loads(line)
+        except (ValueError, UnicodeDecodeError):
+            event = None
+        if isinstance(event, dict) and event.get("isSidechain") is not True:
+            event["_ccx_start_offset"] = start
+            event["_ccx_end_offset"] = next_offset
+            rows.append(event)
+        start = next_offset
+    return rows, offset + end + 1
 
 
 def background_task_summary(tasks: list[dict]) -> dict:
