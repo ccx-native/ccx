@@ -137,22 +137,31 @@ def test_hidden_full_uuid_python_uses_existing_durable_runner_and_atomic_lock(ow
     assert not (owned / "variables").exists()
 
 
+def _run_isolated_live_owner_test(source: str, name: str) -> bool:
+    """Run a test with process-global LiveOwner stdio outside xdist's gateway.
+
+    LiveOwner executes real Python in another thread while replacing sys.*
+    streams. Tests for that integration must not run those replacements inside
+    the worker process that hosts execnet's command channel.
+    """
+    if os.environ.get("_CCX_TEST_LIVE_OWNER_CHILD") == "1":
+        return False
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(("PYTEST_XDIST_", "CCX_SELF_"))
+           and key not in ("PYTEST_CURRENT_TEST", "CCX_ROOT")}
+    env.update(PYTHONPATH=str(REPO), _CCX_TEST_LIVE_OWNER_CHILD="1")
+    result = subprocess.run([
+        sys.executable, "-B", "-m", "pytest", "-q", "-p", "no:xdist",
+        "-o", "faulthandler_timeout=60", f"{source}::{name}",
+    ], env=env, cwd=REPO, capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    return True
+
+
 def test_exact_owner_mode_live_rebind_and_stale_token_are_fenced(owned):
-    # LiveOwner deliberately installs process-global stdio proxies. Keep
-    # this integration scenario out of xdist's own Python/IPC process:
-    # an isolated pytest child runs every original assertion below.
-    if os.environ.get("_CCX_TEST_LIVE_REBIND_CHILD") != "1":
-        env = {key: value for key, value in os.environ.items()
-               if not key.startswith(("PYTEST_XDIST_", "CCX_SELF_"))
-               and key not in ("PYTEST_CURRENT_TEST", "CCX_ROOT")}
-        env["PYTHONPATH"] = str(REPO)
-        env["_CCX_TEST_LIVE_REBIND_CHILD"] = "1"
-        isolated = subprocess.run([
-            sys.executable, "-B", "-m", "pytest", "-q", "-p", "no:xdist",
-            "-o", "faulthandler_timeout=60",
-            f"{__file__}::test_exact_owner_mode_live_rebind_and_stale_token_are_fenced",
-        ], env=env, cwd=REPO, capture_output=True, text=True, timeout=90)
-        assert isolated.returncode == 0, (isolated.stdout, isolated.stderr)
+    if _run_isolated_live_owner_test(
+        __file__, "test_exact_owner_mode_live_rebind_and_stale_token_are_fenced",
+    ):
         return
     with pytest.raises(InvalidTarget):
         live_vars.publish_attachment(live_vars.prepare_durable_attachment({"bad": 1}),

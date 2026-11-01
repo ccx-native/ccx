@@ -142,6 +142,13 @@ def test_original_codex_start_resume_per_worker_shell_and_no_sibling_leak(
 def test_fake_codex_provider_effective_bash_shell_mutates_live_controller_mapping(
     short_root, tmp_path, monkeypatch,
 ):
+    # A LiveOwner installs global Python streams while this test also starts
+    # a fake daemon and Bash bridge. Execute the real assertions outside the
+    # xdist gateway, as for the live rebind test.
+    if backend_fake._run_isolated_live_owner_test(
+        __file__, "test_fake_codex_provider_effective_bash_shell_mutates_live_controller_mapping",
+    ):
+        return
     reactivation._subscription_fenced_provider(monkeypatch)
     with native_fake._f2_fake_processes(
         short_root, tmp_path, monkeypatch,
