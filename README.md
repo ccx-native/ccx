@@ -42,7 +42,8 @@ is a small terminal dashboard for watching and joining workers.
 You need Python 3.11 or newer on Linux, macOS or WSL2, and at least one of
 [Claude Code](https://docs.claude.com/en/docs/claude-code) or
 [Codex](https://github.com/openai/codex), installed and logged in. Tested with
-Claude Code 2.1.316 and Codex 0.166.
+Claude Code 2.1.316 and Codex 0.166, on WSL2, macOS 12 (Intel) and
+macOS 27 (Apple silicon).
 
 ```bash
 uv tool install ccx-native     # or: pipx install ccx-native / npm install -g ccx-native
