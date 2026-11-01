@@ -25,6 +25,12 @@ usual; ccx reads Claude Code's transcripts there.
   store. It registers ccx's hook commands (`ccx hooks-relay`) and status line
   (`ccx statusline-relay`; `CCX_STATUSLINE_BRIDGE=0` turns it off). Workers with
   full permissions also skip Claude's one-time "Bypass Permissions mode" warning.
+  The file also selects Claude's classic renderer, even if your settings choose
+  fullscreen.
+- **Your hooks.** Your own and plugins' Claude hooks still run in every worker:
+  Notification hooks (sounds, desktop alerts) fire for unattended workers too,
+  and PreToolUse or PermissionRequest hooks that decide still apply. See the Stop-hook
+  limitation in [Troubleshooting](troubleshooting.md#known-limitations).
 - **Shell.** Worker shells get `python` and `python3` shell functions, through
   `CLAUDE_ENV_FILE` for Claude, and `BASH_ENV` and `ZDOTDIR` for Codex. They
   make [variables](variables/README.md) available, and run

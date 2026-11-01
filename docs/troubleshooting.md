@@ -56,6 +56,23 @@ ccx peek "$W" --status   # just the state
   `ccx notify "$W" --next-turn` from a Codex parent) waits for that turn. A server
   or watcher left running doesn't mean the work is unfinished.
 
+## Claude workers say "Not logged in"
+
+- **Started from a Claude worker, with a token login.** With
+  `claude setup-token`, your login is only the `CLAUDE_CODE_OAUTH_TOKEN`
+  variable, and Claude Code removes it from the shell its tools run in. A Claude
+  worker started by another Claude worker then comes up not logged in. Log in
+  with `/login` instead, or set `CLAUDE_ENV_FILE`, in the environment you run
+  ccx from, to a file containing
+  `export CLAUDE_CODE_OAUTH_TOKEN="$(cat ~/.config/claude-token)"`. Every command
+  the model runs can then read your token, so only do this on a machine you
+  control. Codex parents aren't affected, unless your Codex shell policy
+  excludes `*TOKEN*` variables; ccx doesn't override that policy.
+- **On macOS over SSH.** The login Keychain is locked for SSH sessions, even
+  while you're logged in at the desktop. Run `security unlock-keychain` in the
+  SSH session, and start or revive Claude workers only from that session, or use
+  `claude setup-token`.
+
 ## A worker stopped or failed
 
 `ccx send` revives a stopped or failed worker with its history. A turn that was
@@ -102,3 +119,9 @@ two versions (`claude --version`, `codex --version`, `ccx --version`).
 - Status can lag behind a crashed process; use `wait` to check whether a turn
   has finished.
 - A timeout doesn't cancel a worker's turn. Use `ccx stop` if you want to cancel it.
+- Claude Stop or UserPromptSubmit hooks that block or loop (loop plugins, test
+  or review gates) aren't supported in workers. ccx ends the turn at the first
+  Stop, so a wait or notification can return early and usage caps stop applying.
+  A blocking UserPromptSubmit hook leaves the worker busy until `ccx stop`.
+- On macOS, select a store with the same spelling it was created with (case and
+  accents).

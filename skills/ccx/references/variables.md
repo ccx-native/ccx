@@ -31,7 +31,7 @@ ccx runs their Python calls one at a time.
 
 ```bash
 B=$(ccx new --engine claude --cwd ~/repo --vars-from "$W" \
-      "With python3, read result['issues'] and add a 'priority' key to each.")
+      "With python3, replace each item of result['issues'] with {'text': item, 'priority': 'high' or 'low'}.")
 ```
 
 `--var` and `--vars-from` can't be combined in one command. A `fork` doesn't

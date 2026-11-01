@@ -12,6 +12,7 @@ Then check the worker's exact Python command and which interpreter its shell sel
 | Direct `python ...` | Yes, if a native `python` exists |
 | `command python3`, `env python3`, an explicit interpreter path | No |
 | An executable script launched through its shebang | No |
+| Python started by another program (`timeout`, `nohup`, `xargs`, `make`) | No |
 | `python3 -u ...`, `python3 -I ...` and other leading interpreter options | No |
 | `python3 -m pip`, `python3 -m venv`, `python3 -m ensurepip` | No |
 
@@ -29,6 +30,11 @@ the shell environment can bypass it. Claude installs support in its tool shell;
 don't rely on a separately started Bash or zsh loading it. Use a direct call in
 the worker's tool shell. Neither engine passes variables implicitly to a new
 ccx worker; [share them explicitly](sharing.md).
+
+If your Codex configuration sets `shell_environment_policy.include_only`, include
+`BASH_ENV`, `ZDOTDIR`, `CCX_ROOT`, `CCX_SELF_WORKER_ID` and `CCX_SELF_ENGINE`.
+Otherwise Codex workers lose their variables, and ccx can't tell which worker a
+command came from.
 
 ## Selecting Python for live objects
 

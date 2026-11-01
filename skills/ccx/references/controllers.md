@@ -196,7 +196,7 @@ and names are not accepted. Results are plain dicts.
 | Method | Use |
 |---|---|
 | `create(engine, cwd, prompt=None, name=None, model=None, effort=None, permissions="full", wait=False, timeout=None, idle_timeout=None, caps=None, variables=None, variables_from=None, worker_id=None)` | New worker. Returns `worker`, `worker_id`, `engine`, `state`, and with `prompt` + `wait=True` `reply` (the reply text) and `report`. |
-| `send(worker, text, wait=True, timeout=None, caps=None, variables=None, delivery_id=None)` | New turn on an idle or stopped worker. `reply` holds the reply text when there is one. |
+| `send(worker, text, wait=True, timeout=None, caps=None, variables=None, variables_from=None, delivery_id=None)` | New turn on an idle or stopped worker. `reply` holds the reply text when there is one. |
 | `steer(worker, text, wait=True, timeout=120, delivery_id=None)` | Add to a busy worker's running turn. |
 | `wait(worker, timeout=None)` | Until idle, waiting for input or stopped. A timeout is `status="timeout"`, not an exception. |
 | `report(worker, max_chars=None, turn_ref=None)` | The latest finished reply: `text`, `truncated`, `turn_ref`. Raises `SessionUnavailable` when no turn has finished. |

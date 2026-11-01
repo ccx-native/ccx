@@ -50,7 +50,7 @@ Optional `kinds` filters events:
 A nonnull `gap` means some history could not be continued from the cursor.
 Refresh live worker state and reconcile affected deliveries; retained events
 may be replayed. Make event processing tolerant of duplicates.
-`runtime` is `live`, `gone` or `unknown`; an empty page or an unknown runtime
+`runtime` is `live`, `gone` or `unknown` (always `unknown` on macOS); an empty page or an unknown runtime
 does not prove the worker has stopped. Events can trigger a fresh `worker.wait`
 or `turn.reconcile`; they do not replace those results.
 

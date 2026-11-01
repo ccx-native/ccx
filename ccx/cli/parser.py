@@ -131,9 +131,9 @@ Claude Code session or a Codex thread you started yourself.
 
 Waiting for results: a person or a Claude parent uses --wait or `ccx wait`.
 A Codex parent uses --notify-parent (or `ccx notify`) and ends its turn; CCX
-wakes it when the work settles. That needs a CCX Codex worker or a Codex app
-session; a plain `codex` terminal session can't be woken. --no-wait returns
-at once.
+wakes it when the work settles. That works from a CCX Codex worker, the Codex
+app or a default `codex` terminal; a `codex` started with -c, --profile or
+--no-daemon, and `codex exec`, can't be woken. --no-wait returns at once.
 
 From Codex, run ccx outside the sandbox (or with full access): it starts
 processes and writes outside the workspace. Codex must be on PATH or
@@ -471,7 +471,7 @@ def _add_session_parsers(sub) -> None:
     pf.add_argument("--worker-id", default=None,
                     help="Use this UUIDv4 as the fork's id; a retry reuses the same fork.")
     pf.add_argument("--delivery-id", default=None,
-                    help="Id for the first prompt (generated if omitted).")
+                    help="Only create:initial, the default; to retry a fork, reuse --worker-id.")
     pf.add_argument("--model", default=None, help="Model for the fork (default: the source's).")
     pf.add_argument("--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"],
                     help="Reasoning effort for the fork (default: the source's).")
@@ -560,7 +560,8 @@ def _add_session_parsers(sub) -> None:
             "Without NAME, list the worker's variable names and metadata. With "
             "NAME, print that variable's JSON value. Variables are attached with "
             "--var or shared with --vars-from on new, fork and send; inside the "
-            "worker, `python` reads and updates them."
+            "worker, `python3` reads and updates them. Live values from a running "
+            "controller aren't readable here."
         ),
     )
     pvars.add_argument("target", help=_WORKER_QUERY_HELP)

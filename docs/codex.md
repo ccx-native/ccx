@@ -52,6 +52,21 @@ started with `--notify-parent`, so the parent hears back once the whole subtree
 is done. ccx refuses blocking waits from a Codex parent with a message saying
 what to use instead.
 
+**Which sessions can be woken:** a ccx Codex worker, the Codex app, and a
+`codex` terminal on Codex's shared app-server, which is the default. A `codex`
+started with `-c`, `--profile` or `--no-daemon`, and `codex exec`, run their own
+app-server, so ccx refuses `--notify-parent` there; wait with `--wait` instead.
+On the shared app-server, the parent's commands run in that server's
+environment, not the terminal's: a `CCX_ROOT` or `PATH` set only in the terminal
+doesn't reach `ccx`.
+
+ccx wakes your own Codex session only while its window has the thread open,
+and never resumes it in the background. A notification it can't deliver within
+an hour expires; `ccx report` still has the result. A ccx Codex worker that's
+stopped, killed or capped gets its notifications when it's revived. In a
+notification, trust the turn's `status`; `workerState` is only a hint and can
+still say busy.
+
 **Sandbox:** ccx starts processes and writes outside the workspace, so it can't
 run inside Codex's sandbox. Inside the sandbox it refuses at once and says so.
 Run ccx commands with escalated permissions, or start the parent Codex with full
@@ -84,6 +99,9 @@ shows their replies.
   later turns in either one don't reach the other. Like any fork, it reads the
   original thread's history: archiving the original is fine, but deleting it
   breaks the worker.
+- **A running command outlives `stop` and `kill`.** A command Codex is already
+  running keeps going until it exits or `ccx shutdown --engine codex` stops
+  Codex's app-server.
 - **Questions and MCP forms are unsupported; permissions are fixed at creation.**
   See [Permissions](permissions.md#known-limitations).
 - **A fork depends on its source thread**: Codex references the source's history

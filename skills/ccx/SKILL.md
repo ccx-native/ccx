@@ -39,8 +39,11 @@ ccx send "$W" "Now add a regression test."
   default. Claude can background a long wait and let its harness wake it.
 - **Codex parent:** add `--notify-parent` to `new`, `send` or `compact`, or arm a
   running worker with `ccx notify TARGET`. Then carry on or end your turn: ccx
-  resumes you when it settles. Don't wait, sleep or poll. This needs a ccx
-  Codex worker or Codex app session; a plain Codex terminal can't be woken.
+  resumes you when it settles. Don't wait, sleep or poll. This works from a ccx
+  Codex worker, the Codex app, or a default `codex` terminal. A `codex` started
+  with `-c`, `--profile` or `--no-daemon`, and `codex exec`, can't be woken; ccx
+  refuses and says to wait instead. In the notification, trust the turn's
+  `status`; `workerState` is only a hint.
   Run `ccx` with full access: it starts processes and writes outside the workspace.
 - `--no-wait` returns at once and wakes nobody.
 
@@ -51,7 +54,7 @@ ccx send "$W" "Now add a regression test."
 | idle or stopped | `send`; stopped workers revive with their history. |
 | busy | `steer TARGET "..."`, or let it settle before `send`. |
 | waiting for input | `peek`, then `approve`/`reject` a permission request; on Claude, `answer` a question or `respond` to an MCP form. `send` is refused. |
-| going the wrong way | `stop` cancels the turn. `kill` stops the runtime; `send` revives it with its history. |
+| going the wrong way | `stop` cancels the turn, not background work it started. `kill` stops the runtime; `send` revives it with its history. |
 
 ## Reading results
 

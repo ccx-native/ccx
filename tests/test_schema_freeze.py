@@ -4,7 +4,7 @@ These are the golden-shape tests external orchestrators rely on: the exact key s
 rendered transcript document, and the event envelope + tool-telemetry event
 shapes. A failure here means a BREAKING schema change — either fix the change
 or bump the relevant schema version and update the downstream consumers and
-`docs/python-api.md` deliberately.
+`docs/python/` deliberately.
 
 Everything asserted here must round-trip through ``json.dumps`` unchanged.
 """

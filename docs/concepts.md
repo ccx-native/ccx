@@ -46,7 +46,8 @@ For example `stopped` covers `idle-killed` (unloaded after idling), `dead`
 - `steer` adds a message to the turn that is running.
 - `answer`, `approve`/`reject` and `respond` reply to whatever the turn is waiting
   for.
-- `stop` cancels the running turn; the worker stays up.
+- `stop` cancels the running turn; the worker stays up. It doesn't end
+  [background work](#background-work) the turn started.
 
 Each `send` or `steer` has a **delivery id**, generated unless you pass
 `--delivery-id`. Repeating the same message with that id never delivers twice.
