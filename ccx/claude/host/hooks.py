@@ -423,17 +423,15 @@ def cmd_hooks_relay(args):
     msg = {"op": "hook-event", "event": args.event, "data": data}
     retry_s = hook_relay_retry_s(data)
     try:
-        if args.event in ("SessionStart", "UserPromptSubmit", "PreToolUse",
-                          "Stop", "PostToolUse", "PostToolUseFailure", "SubagentStop"):
-            # Keep the relay connected until the host has consumed the
-            # complete event. Darwin may drop a just-closed PreToolUse relay
-            # before the host loop processes it. The bounded acknowledgement
-            # is not a reason to replay any hook after an unknown result.
-            _host_rpc(args.short, msg, timeout=BOUNDARY_SEND_ACK_S + 2.0,
-                      connect_retry_s=retry_s)
-        else:
-            with _relay_connect(args.short, retry_s=retry_s) as s:
-                s.sendall((json.dumps(msg) + "\n").encode())
+        # Keep the relay connected until the host has consumed the complete
+        # event: Darwin may drop a just-closed relay before the host loop reads
+        # it. The bounded acknowledgement is never a reason to replay a hook.
+        # Hosts started before every event was acknowledged don't answer
+        # Notification or SubagentStart, so those wait only briefly.
+        brief = args.event in ("Notification", "SubagentStart")
+        _host_rpc(args.short, msg,
+                  timeout=1.0 if brief else BOUNDARY_SEND_ACK_S + 2.0,
+                  connect_retry_s=retry_s)
     except Exception:
         # Hook must not fail Claude. Swallow errors silently.
         pass

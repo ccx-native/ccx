@@ -4270,10 +4270,11 @@ def _run_host(args):
                 if reply is None:
                     reply = {"ok": True, "delivered": False}
                 client_sock.sendall((json.dumps(reply) + "\n").encode())
-            elif event in ("SessionStart", "UserPromptSubmit", "PreToolUse",
-                           "Stop"):
+            else:
                 # The event is handled before this same-stream acknowledgement;
                 # owner-sensitive hooks have already proved PID/start ancestry.
+                # Every relay waits for it: Darwin can drop a just-closed
+                # connection before the host reads it.
                 client_sock.sendall(b'{"ok":true}\n')
         else:
             client_sock.sendall((json.dumps({"ok": False, "error": f"unknown op {op!r}"}) + "\n").encode())
