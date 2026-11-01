@@ -136,15 +136,6 @@ def fmt_age(ms: int | None) -> str:
     return "now"
 
 
-def fmt_secs(s: int | None) -> str:
-    if s is None:
-        return "—"
-    for unit, n in (("d", 86400), ("h", 3600), ("m", 60), ("s", 1)):
-        if s >= n:
-            return f"{int(s // n)}{unit}"
-    return "0s"
-
-
 def token_total(row: dict) -> int | None:
     """Unknown token counters stay unknown, not fabricated zeroes."""
     a, b = row.get("input_tokens"), row.get("output_tokens")
@@ -376,7 +367,6 @@ class Store:
         self._lock = threading.Lock()
         self.sessions: list[dict] = []
         self.statuses: dict[str, dict] = {}
-        self._background_events: dict[str, dict] = {}
         self.statuses_error: str | None = None
         self.usage: dict[str, dict] = {}  # only successfully fetched engines
         self.usage_engines: tuple[str, ...] = ()
@@ -400,40 +390,11 @@ class Store:
         with self._lock:
             if statuses is not None:
                 self.statuses = statuses
-                for worker, event_summary in list(self._background_events.items()):
-                    status = self.statuses.get(worker)
-                    if not isinstance(status, dict):
-                        continue
-                    recorded = status.get("background_task_summary") or {}
-                    if (int(recorded.get("as_of_ms") or 0)
-                            >= int(event_summary.get("as_of_ms") or 0)):
-                        del self._background_events[worker]
-                    else:
-                        self.statuses[worker] = {
-                            **status, "background_task_summary": event_summary,
-                        }
             else:
                 # A failed batch is not actionable evidence: never keep an old
                 # permission/question request ID on the visible rows.
                 self.statuses = {}
             self.statuses_error = error
-
-    def update_background_event(self, worker: str, event: dict) -> None:
-        """Apply the complete owner event snapshot to the selected worker."""
-        if event.get("kind") != "background.changed":
-            return
-        bg = event.get("summary")
-        if not isinstance(bg, dict):
-            return
-        with self._lock:
-            current = self.statuses.get(worker)
-            if not isinstance(current, dict):
-                return
-            previous = current.get("background_task_summary") or {}
-            if int(bg.get("as_of_ms") or 0) < int(previous.get("as_of_ms") or 0):
-                return
-            self._background_events[worker] = bg
-            self.statuses[worker] = {**current, "background_task_summary": bg}
 
     def set_usage_engines(self, engines):
         with self._lock:
@@ -664,10 +625,9 @@ class StreamTailer:
     most recent. Restarts when the focus changes; the feed keeps following a
     stopped worker, and heartbeat lines are skipped."""
 
-    def __init__(self, ccx_bin: str, popen=None, on_event=None):
+    def __init__(self, ccx_bin: str, popen=None):
         self.ccx_bin = ccx_bin
         self._lock = threading.Lock()
-        self._on_event = on_event
         self.short: str | None = None
         self.events: deque = deque(maxlen=200)
         self._proc: subprocess.Popen | None = None
@@ -709,11 +669,6 @@ class StreamTailer:
                     # inject stale events from the previous session into the new one.
                     if self.events is target_events:
                         self.events.append(evt)
-                        event_worker = self.short
-                    else:
-                        event_worker = None
-                if event_worker is not None and self._on_event is not None:
-                    self._on_event(event_worker, evt)
         except (OSError, ValueError):
             pass
 
@@ -916,8 +871,7 @@ class App:
         self.poller = Poller(ccx_bin, self.store)
         self.poller.set_scope(scope)
         self.peeker = ConversationWorker(ccx_bin, self.store)
-        self.streamer = StreamTailer(
-            ccx_bin, on_event=self.store.update_background_event)
+        self.streamer = StreamTailer(ccx_bin)
 
         self.scope = scope
         self.sort = "state"
