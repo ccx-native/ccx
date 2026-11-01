@@ -79,8 +79,10 @@ COMPACT_ENDED_METHOD = "ccx/compact/ended"
 # A content-free wake, journaled only after a delivery receipt became
 # accepted. It is never evidence: readers reconcile the delivery id.
 DELIVERY_CHANGED_METHOD = "ccx/delivery/changed"
+BACKGROUND_CHANGED_METHOD = "ccx/background/changed"
 FEED_METHODS = frozenset({
     DELIVERY_CHANGED_METHOD,
+    BACKGROUND_CHANGED_METHOD,
     LIFECYCLE_METHOD,
     INPUT_REQUESTED_METHOD,
     INPUT_RESOLVED_METHOD,

@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import pty
+import queue
 import select
 import signal
 import socket
@@ -34,6 +35,10 @@ from ccx.claude.delivery import (
     valid_delivery_id as valid_semantic_delivery_id,
     validate_cap as validate_semantic_cap,
     spec_digest as semantic_spec_digest,
+)
+from ccx.ops.background import (
+    claude_task_item, diff_items, materially_changed,
+    summary as background_summary,
 )
 from ccx.ops.compact_ops import (
     HOST_LOCK_TIMEOUT_S as COMPACT_LOCK_TIMEOUT_S,
@@ -114,10 +119,10 @@ from ccx.claude.transcript import (
     compact_command_seen_since,
     exact_user_prompt_event,
     original_started_user_event,
-    extract_background_tasks,
+    BackgroundTaskReducer,
+    read_background_append,
     background_task_current,
     native_transcript_start,
-    running_background_task_summary,
     foreign_prompt_since,
     is_compact_command_text,
     normalize_semantic_prompt_text,
@@ -870,6 +875,142 @@ def _run_host(args):
         _tee_event(line)
         return stamped
 
+    # Cold reconstruction runs off the PTY/hook loop. Only this host later
+    # advances the fold or emits events; hooks themselves contain no task facts.
+    bg_ready: queue.SimpleQueue = queue.SimpleQueue()
+    bg = {
+        "reducer": None, "offset": 0, "items": [],
+        "pending": set(), "pending_anonymous": False,
+        "last": rec.get("backgroundTaskSummary"), "poll_at": 0.0,
+    }
+    from ccx.ops.forking import inherited_task_filter
+
+    def bootstrap_background() -> None:
+        fold = BackgroundTaskReducer()
+        offset = 0
+        try:
+            while True:
+                rows, next_offset = read_background_append(rec["transcript"], offset)
+                if next_offset == offset:
+                    break
+                for row in rows:
+                    fold.feed(row)
+                offset = next_offset
+        except FileNotFoundError:
+            pass  # brand-new transcript
+        except Exception as error:
+            bg_ready.put((None, offset, str(error)))
+            return
+        bg_ready.put((fold, offset, None))
+
+    threading.Thread(target=bootstrap_background, name="ccx-bg-bootstrap",
+                     daemon=True).start()
+
+    def current_bg_items() -> list[dict]:
+        fold = bg["reducer"]
+        if fold is None:
+            return []
+        boundary = native_transcript_start(native_start, rec["transcript"])
+        tasks = inherited_task_filter(rec, fold.tasks())
+        result = []
+        for task in tasks:
+            item = claude_task_item(task)
+            if item is None:
+                continue
+            if item["status"] == "running" and not background_task_current(task, boundary):
+                continue
+            result.append(item)
+        return result
+
+    def publish_bg(new_items: list[dict], changes: list[tuple[str, dict]] | None = None,
+                   *, available: bool = True) -> dict:
+        snapshot = background_summary(new_items, available=available)
+        if not materially_changed(bg["last"], snapshot):
+            return snapshot
+        # Only the host may write this worker's record/journal. A publication
+        # failure does not invent a successful prior observation.
+        store.mutate_record(f"claude:{short}",
+                            patches={"backgroundTaskSummary": snapshot})
+        bg["last"] = snapshot
+        transitions = changes or []
+        transition, item = (transitions[0] if len(transitions) == 1
+                            else ("event", None))
+        broadcast({"type": "background_changed", "transition": transition,
+                   "item": item, "summary": snapshot})
+        return snapshot
+
+    def poll_background(*, force: bool = False, publish: bool = True) -> dict | None:
+        if bg["reducer"] is None:
+            try:
+                fold, offset, error = bg_ready.get_nowait()
+            except queue.Empty:
+                return None
+            if error:
+                return publish_bg([], available=False) if publish else background_summary([], available=False)
+            bg["reducer"], bg["offset"] = fold, offset
+            bg["items"] = current_bg_items()
+            # Establish a recorded baseline; a new host doesn't replay old
+            # native launches as fresh started transitions.
+            baseline = background_summary(bg["items"])
+            if bg["last"] is None:
+                store.mutate_record(f"claude:{short}",
+                                    patches={"backgroundTaskSummary": baseline})
+                bg["last"] = baseline
+            elif publish:
+                publish_bg(bg["items"])
+
+        if bg["reducer"] is None:
+            return None
+        active = any(item["status"] == "running" for item in bg["items"])
+        if not (force or active or bg["pending"] or bg["pending_anonymous"]):
+            return background_summary(bg["items"])
+        now = time.monotonic()
+        if not force and now - bg["poll_at"] < 0.95:
+            return background_summary(bg["items"])
+        bg["poll_at"] = now
+        try:
+            rows, offset = read_background_append(rec["transcript"], bg["offset"])
+        except FileNotFoundError:
+            return background_summary(bg["items"])
+        except (OSError, ValueError):
+            if publish:
+                return publish_bg([], available=False)
+            return background_summary([], available=False)
+        for row in rows:
+            relevant = bg["reducer"].feed(row)
+            if row.get("type") == "user":
+                for part in (row.get("message") or {}).get("content") or []:
+                    if isinstance(part, dict) and part.get("type") == "tool_result":
+                        bg["pending"].discard(part.get("tool_use_id"))
+            if not relevant:
+                continue
+            new_items = current_bg_items()
+            changes = diff_items(bg["items"], new_items)
+            bg["items"] = new_items
+            if publish and changes:
+                publish_bg(new_items, changes)
+        bg["offset"] = offset
+        if force:
+            bg["pending"].clear()
+            bg["pending_anonymous"] = False
+        snapshot = background_summary(bg["items"])
+        if publish and materially_changed(bg["last"], snapshot):
+            publish_bg(bg["items"])
+        return snapshot
+
+    def arm_background_hook(event_name: str, data: dict) -> None:
+        if event_name == "SubagentStop" or (
+            event_name in {"PostToolUse", "PostToolUseFailure"}
+            and data.get("tool_name") in {
+                "Bash", "Monitor", "Agent", "Task", "TaskStop", "SendMessage"
+            }
+        ):
+            tool_id = _hook_tool_use_id(data)
+            if tool_id:
+                bg["pending"].add(tool_id)
+            else:
+                bg["pending_anonymous"] = True
+
     # The select loop alone owns both the PTY and the attachment's stream.
     hub = HostAttachment(
         master_fd, lambda rows, cols: set_winsize(master_fd, rows, cols),
@@ -1293,17 +1434,10 @@ def _run_host(args):
             )
         except Exception:
             context = None  # Telemetry is never allowed to fail settlement.
-        try:
-            from ccx.ops.forking import inherited_task_filter
-            tasks = inherited_task_filter(
-                rec, extract_background_tasks(rec["transcript"]))
-            boundary = native_transcript_start(
-                native_start, rec["transcript"])
-            bg_summary = running_background_task_summary(tasks, boundary, settled_ms)
-        except Exception:
-            # A failed scan must not preserve a stale 'running' snapshot.
-            bg_summary = {"runningCount": None, "kinds": None,
-                          "monitors": [], "asOfMs": settled_ms}
+        # One force read of the appended native rows; no whole-history parse.
+        bg_summary = poll_background(force=True, publish=False)
+        if bg_summary is None:
+            bg_summary = background_summary([], available=False)
         committed = commit_host_turn_settlement(
             short, turn_ref=turn_ref, prior_turns=state["turns"],
             outcome=outcome, settled_at_ms=settled_ms, proposed_title=title,
@@ -1386,6 +1520,8 @@ def _run_host(args):
             if outcome == "interrupted" or interrupted:
                 event["interrupted"] = True
         stamped = broadcast(event)
+        if materially_changed(bg["last"], bg_summary):
+            publish_bg(bg["items"], available=bg_summary["available"])
         # A pending parent wake must survive a notifyd crash. Checking the
         # registration inventory and restarting notifyd can block on disk/PIDs,
         # so only schedule the work here, never run it in the PTY/select loop.
@@ -1616,6 +1752,7 @@ def _run_host(args):
         )
 
     def on_subagent_hook_event(event_name, data):
+        arm_background_hook(event_name, data)
         """A subagent's own hook: attributed events only, never parent state."""
         if event_name == "PreToolUse":
             tuid = _hook_tool_use_id(data)
@@ -1661,6 +1798,7 @@ def _run_host(args):
         if (event_name == "UserPromptSubmit" and state.get("compacting") is not None
                 and is_compact_command_text(data.get("prompt"))):
             return
+        arm_background_hook(event_name, data)
         note_interrupt_activity(event_name)
         obs = state.get("interrupt_observation")
         if (obs is not None and obs.get("passive") and obs.get("settling")
@@ -4230,6 +4368,8 @@ def _run_host(args):
             if state["current"] == S.CRASHED:
                 break
 
+            poll_background()
+
             # Claude Code can emit a synthetic terminal API-error assistant message
             # and a turn_duration event without firing the Stop hook. Hooks remain
             # the primary lifecycle signal; this raw-transcript tail is only the
@@ -4664,23 +4804,13 @@ def _run_host(args):
                     # or Monitor keeps running on its own — `last_activity` is
                     # decoupled from bg tasks, so the killer would otherwise reap a
                     # worker with live child work / live monitor subscriptions.
-                    now = time.time()
-                    if now - (state.get("bg_idle_checked_at") or 0.0) >= BG_IDLE_RECHECK_S:
-                        state["bg_idle_checked_at"] = now
-                        try:
-                            from ccx.ops.forking import inherited_task_filter
-                            _tasks = inherited_task_filter(
-                                rec, extract_background_tasks(rec["transcript"])
-                            )
-                            boundary = native_transcript_start(
-                                native_start, rec["transcript"]
-                            )
-                            state["bg_idle_running"] = any(
-                                background_task_current(t, boundary) for t in _tasks
-                            )
-                        except Exception:
-                            # Never let a transcript-read failure block the killer.
-                            state["bg_idle_running"] = False
+                    poll_background(force=True)
+                    state["bg_idle_running"] = (
+                        bg["reducer"] is None
+                        or any(item["status"] == "running"
+                               for item in bg["items"])
+                        or bool(bg["pending"]) or bg["pending_anonymous"]
+                    )
                     if state.get("bg_idle_running"):
                         if not state.get("bg_idle_grace"):
                             state["bg_idle_grace"] = True

@@ -2884,3 +2884,42 @@ def test_background_append_ignores_partial_and_reuses_state(tmp_path):
         reducer.feed(evt)
     assert reducer.tasks()[0]["status"] == "completed"
     assert T.read_background_append(p, cursor) == ([], cursor)
+
+def test_background_summary_materiality_and_bounds():
+    from ccx.ops.background import summary, materially_changed, ITEM_LIMIT
+    items = [{"id": f"command:{i}", "kind": "command", "status": "running",
+              "label": "task"} for i in range(ITEM_LIMIT + 3)]
+    snap = summary(items, as_of_ms=10)
+    assert snap["running_count"] == ITEM_LIMIT + 3
+    assert snap["items_truncated"] == 3
+    assert len(snap["items"]) == ITEM_LIMIT
+    assert not materially_changed(snap, summary(items, as_of_ms=20))
+    assert materially_changed(snap, summary([], as_of_ms=20))
+
+
+def test_background_claude_fold_diff_transcript_only(tmp_path):
+    from ccx.ops.background import claude_task_item, diff_items
+    source = _bg_launch_events()
+    p = tmp_path / "s.jsonl"
+    reducer = T.BackgroundTaskReducer()
+    _write_bg_jsonl(p, source)
+    for event in T._iter_transcript(p):
+        reducer.feed(event)
+    before = [x for t in reducer.tasks() if (x := claude_task_item(t))]
+    assert before[0]["status"] == "running"
+    notify = _bg_notification_event()
+    reducer.feed(notify)
+    after = [x for t in reducer.tasks() if (x := claude_task_item(t))]
+    assert diff_items(before, after)[0][0] == "finished"
+
+
+def test_background_reducer_irrelevant_rows_do_not_trigger_snapshots():
+    reducer = T.BackgroundTaskReducer()
+    assert reducer.feed({"type": "assistant", "message": {
+        "content": [{"type": "text", "text": "x" * 1000}]}}) is False
+    assert reducer.feed({"type": "queue-operation", "operation": "enqueue",
+                         "content": "ordinary text"}) is False
+    assert reducer.feed({"type": "assistant", "message": {"content": [{
+        "type": "tool_use", "id": "tu", "name": "Bash",
+        "input": {"command": "date", "run_in_background": True}
+    }]}}) is True

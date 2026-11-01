@@ -46,6 +46,7 @@ KIND_COMPACT_STARTED = "compact.started"
 KIND_COMPACT_ENDED = "compact.ended"
 KIND_ERROR = "error"
 KIND_DELIVERY_CHANGED = "delivery.changed"
+KIND_BACKGROUND_CHANGED = "background.changed"
 KIND_HEARTBEAT = "heartbeat"
 
 KINDS = frozenset({
@@ -60,6 +61,7 @@ KINDS = frozenset({
     KIND_COMPACT_ENDED,
     KIND_ERROR,
     KIND_DELIVERY_CHANGED,
+    KIND_BACKGROUND_CHANGED,
 })
 
 ENGINES = ("claude", "codex")
@@ -71,6 +73,7 @@ _CLAUDE_KINDS = {
     "turn_start": KIND_TURN_STARTED,
     "turn_complete": KIND_TURN_ENDED,
     "turn_settled": KIND_TURN_ENDED,
+    "background_changed": KIND_BACKGROUND_CHANGED,
     "tool_started": KIND_TOOL_STARTED,
     "tool_finished": KIND_TOOL_FINISHED,
     "permission_requested": KIND_INPUT_REQUESTED,
@@ -250,6 +253,12 @@ def _codex_project(obj: dict[str, Any]) -> dict[str, Any] | None:
         if isinstance(turn_id, str) and turn_id:
             event["turn_id"] = turn_id
             event["turn_ref"] = codex_turn_ref(turn_id)
+        return event
+    if method == "ccx/background/changed":
+        event.update(kind=KIND_BACKGROUND_CHANGED,
+                     transition=params.get("transition"),
+                     item=params.get("item"),
+                     summary=params.get("summary"))
         return event
     if method == DELIVERY_CHANGED_METHOD:
         # A trigger to reconcile this delivery id, never acceptance proof.

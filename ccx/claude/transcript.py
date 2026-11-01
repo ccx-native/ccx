@@ -1112,7 +1112,8 @@ class BackgroundTaskReducer:
         # Terminal, Monitor-event and reopen evidence, appended in transcript order.
         self.evidence: list[dict] = []
 
-    def feed(self, evt: dict) -> None:
+    def feed(self, evt: dict) -> bool:
+        """Ingest one row; tell the owner whether background facts might change."""
         candidates = self.candidates
         launches = self.launches
         results = self.results
@@ -1165,7 +1166,7 @@ class BackgroundTaskReducer:
             msg = evt.get("message") or {}
             content = msg.get("content")
             if not isinstance(content, list):
-                return
+                return False
             tool_results = [c for c in content
                             if isinstance(c, dict) and c.get("type") == "tool_result"]
             tur = evt.get("toolUseResult")
@@ -1302,6 +1303,17 @@ class BackgroundTaskReducer:
                         **parsed, "task_id": task_id, "completed_at": ts,
                         "last_open_offset": evt.get("_ccx_start_offset"),
                     })
+            return parsed is not None
+        if t == "user":
+            return bool(tool_results)
+        if t == "assistant":
+            return any(
+                isinstance(part, dict) and part.get("type") == "tool_use"
+                and part.get("name") in {"Bash", "Monitor", "Agent", "Task",
+                                        "TaskStop", "SendMessage"}
+                for part in (evt.get("message") or {}).get("content") or []
+            )
+        return False
 
     def tasks(self) -> list[dict]:
         candidates = self.candidates
