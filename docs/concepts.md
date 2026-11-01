@@ -15,8 +15,13 @@ replies.
   accepts a unique prefix of at least 8 lowercase hex characters.
 - A worker's **name** (`ccx new -n`, `ccx set --name`) is a label for lists and the
   dashboard. It is never used to pick a worker.
-- `ccx import` takes over a Claude Code session you started yourself, keeping
-  its history, so ccx can run it from then on.
+- `ccx attach` opens a worker in the engine's own interface so you can work in
+  it directly. ccx keeps running the worker, and other commands keep working
+  while you're attached.
+- `ccx import` brings in a session you started outside ccx, keeping its
+  history. A Claude Code session moves into ccx, so stop using it in the old
+  terminal. A Codex thread is copied into a new worker, and the original stays
+  as it was.
 
 ## States
 
@@ -87,8 +92,9 @@ lists what differs between the engines.
 ## Known limitations
 
 - **No queue behind a busy worker.** `send` refuses; use `steer`, or wait and send.
-- **Import is for idle interactive Claude sessions.** Claude Code background
-  agents, and sessions with a question still pending, can't be imported.
+- **Import needs an idle session.** Claude Code background agents, Claude
+  sessions with a question pending, and Codex threads with a turn running
+  can't be imported.
 - **Requested and actual model are kept apart.** Worker status in Python and RPC
   has `requested_model` and `observed_model`; they can differ, and the second
   may be empty until the engine reports it.

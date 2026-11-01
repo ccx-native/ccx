@@ -4,6 +4,11 @@ Run Claude Code and Codex as persistent local workers. Start them in any folder,
 send follow-ups and read their replies. Coordinate several workers from the
 terminal, a script or another agent.
 
+Workers can be driven by your main agent, by a script, or by you: `ccx attach`
+opens any worker in the engine's own interface, and `ccx import` brings in a
+session you started yourself. [`examples/dashboard.py`](examples/dashboard.md)
+is a small terminal dashboard for watching and joining workers.
+
 - **What it is:** a CLI and Python library that drives the real `claude` and
   `codex` tools, logged in with your own accounts. A worker keeps its folder,
   history and settings across turns and restarts.
