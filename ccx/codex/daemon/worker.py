@@ -948,8 +948,9 @@ class Worker:
         """Drop old-runtime command guards; never assert a native exit.
 
         Called under worker.lock when this app-server goes away or a new
-        owner adopts a recorded worker. A lost command's outcome is unknown,
-        not completed; the next owned snapshot can correct it.
+        owner adopts a recorded worker. A lost command is no longer tracked
+        (its outcome is unknown, so no ``finished`` item is published); the
+        correction keeps the registry-backed pending notifications.
         """
         previous = self.record.get("backgroundTaskSummary")
         had_native = bool(self._bg_open or self._bg_candidates)
@@ -960,7 +961,9 @@ class Worker:
                          and previous["running_count"] > 0)
         if not (had_native or stale_running):
             return False
-        corrected = background_summary([], available=False)
+        # Only native command tracking is lost. Pending parent notifications
+        # come from the durable registry, so they stay in the summary.
+        corrected = background_summary(list(self._bg_notifications.values()))
         if not materially_changed(previous, corrected):
             return False
         self.record["backgroundTaskSummary"] = corrected

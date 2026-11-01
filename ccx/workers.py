@@ -180,16 +180,12 @@ def _codex_record(short: str) -> dict:
 
 def _background_task_block_for_worker(store, owner) -> dict:
     """Bound the original background-task facts for facade wait and report."""
-    from ccx.ops.common import background_task_block
+    from ccx.ops.common import background_task_block, recorded_background_facts
 
     rec = store.record(owner.worker)  # mandatory owner/record evidence stays strict
     recorded = rec.get("backgroundTaskSummary")
     if isinstance(recorded, dict):
-        return background_task_block({
-            "background_task_summary": recorded,
-            "running_background_task_count": recorded.get("running_count",
-                                                     recorded.get("runningCount")),
-        }, supported=True)
+        return background_task_block(recorded_background_facts(recorded), supported=True)
     if owner.engine != "claude":
         return background_task_block(None, supported=False)
     try:

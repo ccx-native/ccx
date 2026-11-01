@@ -213,12 +213,8 @@ def recorded_inspector(store, target: str) -> dict[str, Any]:
     rec = store.record(owner.worker)
     snapshot = rec.get("backgroundTaskSummary")
     if isinstance(snapshot, dict):
-        facts = {
-            "background_task_summary": snapshot,
-            "running_background_task_count": snapshot.get("running_count",
-                                                     snapshot.get("runningCount")),
-        }
-        background = background_task_block(facts, supported=True)
+        background = background_task_block(
+            recorded_background_facts(snapshot), supported=True)
     else:
         # Historical Claude inspection can still use the explicit diagnostic
         # extractor; the normal recorded owner snapshot is preferred.
@@ -328,6 +324,24 @@ def _background_block_size(block: dict[str, Any]) -> int:
         block, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
         default=str,
     ).encode("utf-8"))
+
+
+def recorded_background_facts(snapshot: dict) -> dict[str, Any]:
+    """Facts from the owner's recorded summary: its bounded items are the list.
+
+    The recorded items are the compact owner view (id, kind, status, label...),
+    not the detailed transcript inventory that ``CcxClient.background_tasks()``
+    returns; ``background_tasks_truncated`` reflects the summary's own bound.
+    """
+    items = snapshot.get("items")
+    items = [dict(item) for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+    return {
+        "background_task_summary": snapshot,
+        "background_tasks": items,
+        "background_tasks_truncated": bool(snapshot.get("items_truncated")),
+        "running_background_task_count": snapshot.get("running_count",
+                                                     snapshot.get("runningCount")),
+    }
 
 
 def background_task_block(

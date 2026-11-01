@@ -954,15 +954,17 @@ def _run_host(args):
                 return publish_bg([], available=False) if publish else background_summary([], available=False)
             bg["reducer"], bg["offset"] = fold, offset
             bg["items"] = current_bg_items()
-            # Establish a recorded baseline; a new host doesn't replay old
-            # native launches as fresh started transitions.
+            # Establish a recorded baseline without replaying old native
+            # launches as fresh `started` items. A non-empty first baseline is
+            # announced once as a snapshot-only event (item null) so a
+            # subscriber that read the earlier empty state learns about it.
             baseline = background_summary(bg["items"])
-            if bg["last"] is None:
+            if publish and (bg["last"] is not None or bg["items"]):
+                publish_bg(bg["items"])
+            elif bg["last"] is None:
                 store.mutate_record(f"claude:{short}",
                                     patches={"backgroundTaskSummary": baseline})
                 bg["last"] = baseline
-            elif publish:
-                publish_bg(bg["items"])
 
         if bg["reducer"] is None:
             return None

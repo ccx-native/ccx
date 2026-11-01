@@ -284,4 +284,5 @@ def test_codex_background_record_status_and_rpc_inspect(originals):
     assert block["supported"] is True
     assert block["running_count"] == 1
     assert block["summary"] == expected
-    assert block["tasks"] == []  # recorded, never native thread/read
+    # From the recorded summary items, never a native thread/read.
+    assert [task["id"] for task in block["tasks"]] == ["command:exec-test"]

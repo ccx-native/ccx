@@ -713,7 +713,10 @@ def test_native_runtime_retirement_discards_command_guards_and_marks_unknown(ori
     }
     worker._bg_open = {"exec-lost": open_item}
     worker._bg_candidates = {"exec-pending": {**open_item, "id": "command:exec-pending"}}
-    worker.record["backgroundTaskSummary"] = summary([open_item])
+    pending = {"id": "d-1:settled", "kind": "notification", "status": "pending",
+               "label": "child result pending"}
+    worker._bg_notifications = {pending["id"]: pending}
+    worker.record["backgroundTaskSummary"] = summary([open_item, pending])
     worker._save()
     daemon.workers[owner] = worker
     daemon.by_thread[thread_id] = owner
@@ -722,14 +725,16 @@ def test_native_runtime_retirement_discards_command_guards_and_marks_unknown(ori
         assert worker._bg_open == {}
         assert worker._bg_candidates == {}
         snapshot = store.record(owner)["backgroundTaskSummary"]
-        assert snapshot["available"] is False
-        assert snapshot["running_count"] is None
+        # Lost native commands drop out; the registry-backed notification stays.
+        assert snapshot["available"] is True
+        assert snapshot["running_count"] == 0 and snapshot["pending_count"] == 1
+        assert [item["id"] for item in snapshot["items"]] == ["d-1:settled"]
         lines = [row for row in read_journal(owner).events
                  if row.get("method") == BACKGROUND_CHANGED_METHOD]
         assert len(lines) == 1
         assert lines[0]["params"]["transition"] == "event"
         assert lines[0]["params"]["item"] is None
-        assert lines[0]["params"]["summary"]["available"] is False
+        assert lines[0]["params"]["summary"]["pending_count"] == 1
     finally:
         worker.evidence.close()
 
@@ -754,7 +759,7 @@ def test_new_codex_owner_reconciles_stale_background_from_lost_runtime(original_
             worker._save()
         assert worker._bg_open == worker._bg_candidates == {}
         new = store.record(owner)["backgroundTaskSummary"]
-        assert new["available"] is False and new["running_count"] is None
+        assert new["available"] is True and new["running_count"] == 0
         with worker.lock:
             assert worker._lose_native_background_locked() is False
     finally:
