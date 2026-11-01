@@ -569,3 +569,86 @@ def test_foreground_command_is_not_background(original_codex):
                     if row.get("method") == BACKGROUND_CHANGED_METHOD]
     finally:
         worker.evidence.close()
+
+
+def test_background_parent_registry_snapshots_no_delivery_changed(original_codex, monkeypatch):
+    """S1/S2: registry transitions alone project parent background state."""
+    import ccx.notify.registry as registry
+    from ccx.codex.daemon.daemon import CodexDaemon
+    from ccx.codex.daemon.worker import Worker
+    from ccx.codex.evidence import BACKGROUND_CHANGED_METHOD, DELIVERY_CHANGED_METHOD
+
+    store, _, owner, tid = original_codex
+    daemon = CodexDaemon()
+    daemon._uuid_store = store
+    worker = Worker(daemon, store.record(owner))
+    parent = {
+        "kind": "ccx-codex", "workerId": owner,
+        "threadId": tid, "generation": store.generation,
+    }
+    reg = {
+        "parent": parent,
+        "eventId": "f1111111-1111-4111-8111-111111111111",
+        "state": "armed",
+    }
+    regs = [reg]
+    monkeypatch.setattr(registry, "iter_registrations",
+                        lambda *, include_terminal=False: list(regs))
+    def emitted():
+        return [line for line in read_journal(owner).events
+                if line["method"] in (BACKGROUND_CHANGED_METHOD,
+                                      DELIVERY_CHANGED_METHOD)]
+    try:
+        assert worker.refresh_parent_notifications() is True
+        assert worker.refresh_parent_notifications() is False
+        [started] = emitted()
+        assert started["method"] == BACKGROUND_CHANGED_METHOD
+        assert started["params"]["transition"] == "started"
+        item = started["params"]["item"]
+        assert item["id"] == item["delivery_id"] == item["notification_id"] + ":settled"
+        assert started["params"]["summary"]["pending_count"] == 1
+
+        # An early parent-notify still sees ready; it cannot invent placement.
+        reg["state"] = "ready"
+        assert worker.refresh_parent_notifications() is False
+        reg["state"] = "delivered"
+        assert worker.refresh_parent_notifications() is True
+        assert worker.refresh_parent_notifications() is False
+        started, ended = emitted()
+        assert ended["method"] == BACKGROUND_CHANGED_METHOD
+        assert ended["params"]["transition"] == "finished"
+        assert ended["params"]["item"]["id"] == item["id"]
+        assert ended["params"]["summary"]["pending_count"] == 0
+
+        # A missed pair of arm callbacks repairs as one aggregate item:null.
+        for n in (2, 3):
+            regs.append({
+                "parent": parent,
+                "eventId": f"f1111111-1111-4111-8111-{n:012d}",
+                "state": "armed",
+            })
+        assert worker.refresh_parent_notifications() is True
+        assert emitted()[-1]["params"]["transition"] == "event"
+        assert emitted()[-1]["params"]["item"] is None
+        assert emitted()[-1]["params"]["summary"]["pending_count"] == 2
+        assert all(line["method"] != DELIVERY_CHANGED_METHOD for line in emitted())
+    finally:
+        worker.evidence.close()
+
+
+def test_best_effort_hint_never_starts_codexd_or_changes_registry(monkeypatch):
+    import ccx.notify.registry as registry
+    import ccx.codex.runtime as runtime
+
+    attempts = []
+    def absent(message, *, timeout):
+        attempts.append((message, timeout))
+        return {"ok": False, "transport": "absent"}
+
+    monkeypatch.setattr(runtime, "daemon_rpc", absent)
+    reg = {"parent": {"kind": "ccx-codex", "workerId": "f1111111-1111-4111-8111-111111111111"}}
+    registry._hint_managed_parent_background(reg)
+    assert len(attempts) == 1
+    assert attempts[0][0]["op"] == "background-refresh"
+    assert attempts[0][1] <= 0.25
+    assert reg["parent"]["workerId"] == "f1111111-1111-4111-8111-111111111111"
