@@ -85,10 +85,9 @@ it. Results also list the worker's background work as `background_tasks`.
 The final reply of the latest finished turn: `text`, `has_final_message`,
 `truncated`, `turn_ref`, `delivery_id` and `status`. `turn_ref` (from `wait` or
 `send`) reads exactly that turn instead. A turn that ended with tool calls only
-returns `text=""` and `has_final_message=False`. While a newer turn is running
-or waiting for input, it returns the last confirmed reply with a `note`.
-A failed or interrupted turn can return empty text; check `status` and `note`.
-With no finished turn yet it raises `SessionUnavailable`.
+returns `text=""` and `has_final_message=False`. While a newer turn is running,
+waiting for input or has failed, it returns the last confirmed reply with a
+`note` saying so. With no finished turn yet it raises `SessionUnavailable`.
 
 ### `status(worker)` and `list(*, engine=None, cwd=None, state=None, parent=None, limit=None)`
 

@@ -131,9 +131,10 @@ Claude Code session or a Codex thread you started yourself.
 
 Waiting for results: a person or a Claude parent uses --wait or `ccx wait`.
 A Codex parent uses --notify-parent (or `ccx notify`) and ends its turn; CCX
-wakes it when the work settles. Your own Codex app or terminal session must
-have its thread loaded on Codex's shared app-server; otherwise use --wait or
-`ccx wait`. CCX Codex workers can also be woken. --no-wait returns at once.
+wakes it when the work settles. That works from a CCX Codex worker, the Codex
+app or a default `codex` terminal. A `codex` running its own app-server (for
+example one started with -c, --profile or --no-daemon, or `codex exec`) can't
+be woken; CCX refuses and says to wait instead. --no-wait returns at once.
 
 From Codex, run ccx outside the sandbox (or with full access): it starts
 processes and writes outside the workspace. Codex must be on PATH or

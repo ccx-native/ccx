@@ -58,15 +58,20 @@ ccx peek "$W" --status   # just the state
 
 ## Claude workers say "Not logged in"
 
-- **Token login (`claude setup-token`).** Check that the environment launching
-  ccx has `CLAUDE_CODE_OAUTH_TOKEN`; ccx inherits it. Claude Code tool shells
-  can omit it, leaving workers they start without a login. Use `/login`, or set
-  `CLAUDE_ENV_FILE` before launching ccx to a file that exports your saved token.
-  This makes the token available to worker commands. From Codex, check that its
-  shell environment policy passes the token through.
-- **macOS over SSH.** If the login Keychain is locked, run
-  `security unlock-keychain`, then start or revive workers from that SSH session.
-  A desktop login alone may not unlock it for SSH. Token login is another option.
+- **Started from a Claude worker, with a token login.** With
+  `claude setup-token`, your login is only the `CLAUDE_CODE_OAUTH_TOKEN`
+  variable, and Claude Code removes it from the shell its tools run in. A Claude
+  worker started by another Claude worker then comes up not logged in. Log in
+  with `/login` instead, or set `CLAUDE_ENV_FILE`, in the environment you run
+  ccx from, to a file containing
+  `export CLAUDE_CODE_OAUTH_TOKEN="$(cat ~/.config/claude-token)"`. Every command
+  the model runs can then read your token, so only do this on a machine you
+  control. Codex parents aren't affected, unless your Codex shell policy
+  excludes `*TOKEN*` variables; ccx doesn't override that policy.
+- **On macOS over SSH.** The login Keychain is locked for SSH sessions, even
+  while you're logged in at the desktop. Run `security unlock-keychain` in the
+  SSH session, and start or revive Claude workers only from that session, or use
+  `claude setup-token`.
 
 ## A worker stopped or failed
 
