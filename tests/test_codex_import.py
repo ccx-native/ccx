@@ -141,14 +141,21 @@ def test_cli_autodetects_codex_native_id_without_claiming_source(tmp_path, monke
     assert "unchanged" in out.err
 
 
-def test_cli_rejects_ambiguous_exact_native_id(tmp_path, monkeypatch, capsys):
+def test_cli_auto_detect_prefers_claude_without_probing_codex(tmp_path, monkeypatch):
     from ccx.cli.commands import create as cli
     from ccx.claude import external
     from ccx.codex import runtime
     monkeypatch.setattr(external, "exact_import_candidate",
                         lambda _id: {"sessionId": A, "cwd": str(tmp_path)})
-    monkeypatch.setattr(runtime, "read_import_source", lambda _id: _source(tmp_path))
-    with pytest.raises(SystemExit) as exc:
+
+    def no_probe(_id):
+        raise AssertionError("a known Claude session must not start a Codex probe")
+
+    monkeypatch.setattr(runtime, "read_import_source", no_probe)
+    monkeypatch.setattr(cli, "_cmd_import_codex", no_probe)
+    # The Claude import path continues; stop at its first store access.
+    from ccx.store import root
+    monkeypatch.setattr(root, "require_ccx_active",
+                        lambda _root: (_ for _ in ()).throw(RuntimeError("claude path")))
+    with pytest.raises(RuntimeError, match="claude path"):
         cli.cmd_import(Namespace(session=A, engine=None, model=None, effort=None))
-    assert exc.value.code == 1
-    assert "choose --engine" in capsys.readouterr().err

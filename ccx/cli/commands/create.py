@@ -285,8 +285,8 @@ def cmd_import(args):
     if getattr(args, "engine", "claude") == "codex":
         return _cmd_import_codex(args)
     if getattr(args, "engine", "claude") is None:
-        # Probe exact native identities, not worker aliases or display names.
-        # An error examining one provider must not silently guess its identity.
+        # Exact native IDs only, never worker aliases or names. Claude is a
+        # cheap local lookup; probe Codex only when Claude doesn't know the ID.
         from ccx.errors import SessionNotFound
         from ccx.codex.runtime import read_import_source
         try:
@@ -296,24 +296,16 @@ def cmd_import(args):
         except CcxError as error:
             sys.stderr.write(f"[ccx] import: {error}\n")
             raise SystemExit(error.exit_code) from error
-        try:
-            codex_candidate = read_import_source(sid)
-        except SessionNotFound:
-            codex_candidate = None
-        except CcxError as error:
-            if claude_candidate is None:
+        if claude_candidate is None:
+            try:
+                codex_candidate = read_import_source(sid)
+            except SessionNotFound:
+                sys.stderr.write(f"[ccx] import: no native session/thread for {sid}\n")
+                raise SystemExit(2)
+            except CcxError as error:
                 sys.stderr.write(f"[ccx] import: {error}\n")
                 raise SystemExit(error.exit_code) from error
-            codex_candidate = None
-        if claude_candidate is not None and codex_candidate is not None:
-            sys.stderr.write("[ccx] import: exact ID exists in both engines; "
-                             "choose --engine claude or --engine codex\n")
-            raise SystemExit(EXIT_ERROR)
-        if codex_candidate is not None:
             return _cmd_import_codex(args, source=codex_candidate)
-        if claude_candidate is None:
-            sys.stderr.write(f"[ccx] import: no native session/thread for {sid}\n")
-            raise SystemExit(2)
     if getattr(args, "model", None) is not None or getattr(args, "effort", None) is not None:
         sys.stderr.write("[ccx] import: --model/--effort are Codex-only\n")
         raise SystemExit(EXIT_ERROR)
