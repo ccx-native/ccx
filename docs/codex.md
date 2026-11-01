@@ -81,8 +81,9 @@ shows their replies.
 - **The app-server protocol can change.** See
   [Troubleshooting](troubleshooting.md#after-upgrading-claude-code-or-codex).
 - **An import is a fork.** `ccx import` copies a Codex thread into a new worker;
-  later turns in either one don't reach the other. Like any fork, it references
-  the original thread's history, so keep the original thread.
+  later turns in either one don't reach the other. Like any fork, it reads the
+  original thread's history: archiving the original is fine, but deleting it
+  breaks the worker.
 - **Questions and MCP forms are unsupported; permissions are fixed at creation.**
   See [Permissions](permissions.md#known-limitations).
 - **A fork depends on its source thread**: Codex references the source's history
