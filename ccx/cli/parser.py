@@ -126,8 +126,8 @@ Quick start:
 Workers keep their own history. Target them by the handle `ccx new` prints
 (claude:<uuid> or codex:<uuid>), the full UUID, or a unique UUID prefix of at
 least 8 hex characters. Names are labels for `ccx list`, not targets. Idle workers
-stop after a while and revive on the next send. `ccx import` brings an
-existing interactive Claude session under CCX.
+stop after a while and revive on the next send. `ccx import` brings in a
+Claude Code session or a Codex thread you started yourself.
 
 Waiting for results: a person or a Claude parent uses --wait or `ccx wait`.
 A Codex parent uses --notify-parent (or `ccx notify`) and ends its turn; CCX
