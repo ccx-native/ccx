@@ -324,7 +324,8 @@ def _adopt_original_native_worker(
             daemon.workers[owner.worker_id] = worker
             daemon.by_thread[thread_id] = owner.worker_id
             daemon.empty_since = None
-            return worker
+        worker.refresh_parent_notifications()
+        return worker
 
 
 def _native_start_retryable_save_error(daemon, error: BaseException) -> bool:

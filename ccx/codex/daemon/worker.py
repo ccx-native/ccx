@@ -129,6 +129,15 @@ class Worker:
         # The journal is the source; these are this app-server's owned live IDs.
         self._bg_candidates: dict[str, dict] = {}
         self._bg_open: dict[str, dict] = {}
+        # No replay ledger: a persisted snapshot is enough to compare current
+        # registry truth when this worker is adopted or notified again.
+        prior_items = (record.get("backgroundTaskSummary") or {}).get("items") or []
+        self._bg_notifications = {
+            item["id"]: dict(item) for item in prior_items
+            if isinstance(item, dict) and item.get("kind") == "notification"
+            and item.get("status") == "pending"
+            and isinstance(item.get("id"), str)
+        }
         # The last record write a notification handler could not make (disk
         # full, permissions). The in-memory record stays authoritative.
         self.persistence_error: dict[str, Any] | None = None
@@ -869,7 +878,9 @@ class Worker:
 
     def _publish_background_locked(self, transition: str, item: dict) -> None:
         """Journal one actual native change; the caller holds worker.lock."""
-        snapshot = background_summary(list(self._bg_open.values()))
+        snapshot = background_summary([
+            *self._bg_open.values(), *self._bg_notifications.values(),
+        ])
         if not materially_changed(self.record.get("backgroundTaskSummary"), snapshot):
             return
         self.record["backgroundTaskSummary"] = snapshot
@@ -878,6 +889,71 @@ class Worker:
             {"transition": transition, "item": item, "summary": snapshot},
             thread_id=(self.record.get("native") or {}).get("threadId"),
         )
+
+    def refresh_parent_notifications(self) -> bool:
+        """Read the current registry once; publish only a changed snapshot.
+
+        Only codexd owns this worker's evidence journal. Best-effort IPC hints
+        do not contain facts, and an absent owner never starts a daemon.
+        """
+        from ccx.notify.registry import iter_registrations, _delivery_id
+        rows = iter_registrations(include_terminal=True)
+        with self.lock:
+            if self.teardown_claimed or self._externally_terminalized:
+                return False
+            updated = {}
+            outcomes = {}
+            for reg in rows:
+                parent = reg.get("parent") or {}
+                if (parent.get("kind") != "ccx-codex"
+                        or parent.get("workerId") != self.worker_id
+                        or parent.get("generation") != self.daemon._uuid_store.generation):
+                    continue
+                event_id = reg.get("eventId")
+                if not isinstance(event_id, str):
+                    continue
+                delivery_id = _delivery_id(event_id)
+                state = reg.get("state")
+                if state in {"armed", "ready"}:
+                    updated[delivery_id] = {
+                        "id": delivery_id, "kind": "notification",
+                        "status": "pending", "label": "child result pending",
+                        "notification_id": event_id, "delivery_id": delivery_id,
+                    }
+                else:
+                    outcomes[delivery_id] = state
+            previous = self._bg_notifications
+            if previous == updated:
+                return False
+            self._bg_notifications = updated
+            additions = [id for id in updated if id not in previous]
+            removals = [id for id in previous if id not in updated]
+            if len(additions) == 1 and not removals:
+                transition, item = "started", updated[additions[0]]
+            elif len(removals) == 1 and not additions:
+                item = dict(previous[removals[0]])
+                result = outcomes.get(removals[0])
+                transition, item["status"] = {
+                    "delivered": ("finished", "completed"),
+                    "cancelled": ("stopped", "stopped"),
+                    "undeliverable": ("failed", "failed"),
+                }.get(result, ("event", "unknown"))
+            else:
+                transition, item = "event", None
+            snapshot = background_summary([
+                *self._bg_open.values(), *updated.values(),
+            ])
+            if not materially_changed(self.record.get("backgroundTaskSummary"), snapshot):
+                return False
+            self.record["backgroundTaskSummary"] = snapshot
+            self.evidence.record(
+                BACKGROUND_CHANGED_METHOD,
+                {"transition": transition, "item": item, "summary": snapshot},
+                thread_id=(self.record.get("native") or {}).get("threadId"),
+            )
+            self.record["evidence"] = self.evidence.state()
+            self._save()
+            return True
 
     def _background_native_locked(
         self, method: str, params: dict, completed_turn: bool,

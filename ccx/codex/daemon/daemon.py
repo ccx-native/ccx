@@ -997,12 +997,17 @@ class CodexDaemon:
                 worker = self._adopt_original_native_worker(f"codex:{short}")
             except Exception as error:
                 return {"ok": False, "error": f"original native kill adoption unconfirmed: {error}"}
+        if op == "background-refresh":
+            if worker is None:
+                return self._not_loaded(short)
+            return {"ok": True, "changed": worker.refresh_parent_notifications()}
         if worker is None:
             if op in {"parent-notify", "machine-wake"}:
                 return {"ok": False, "definitive": True,
                         "error": "original parent is unloaded; notification did not reach native"}
             return self._not_loaded(short)
         if op == "parent-notify":
+            worker.refresh_parent_notifications()
             from ccx.notify.registry import read_registration
             from ccx.notify.select import _original_notification_registration
             from ccx.notify.deliver import payload_for_registration

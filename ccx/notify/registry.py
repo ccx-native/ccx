@@ -80,6 +80,30 @@ def read_registration(event_id: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _hint_managed_parent_background(reg: dict[str, Any]) -> None:
+    """Best-effort projection hint to an already-running managed codexd.
+
+    The registry write precedes this hint. No native wake, daemon startup,
+    journal append from notifyd, or retry ledger is involved.
+    """
+    parent = reg.get("parent") or {}
+    if parent.get("kind") != "ccx-codex":
+        return
+    worker_id = parent.get("workerId")
+    if not isinstance(worker_id, str) or not worker_id:
+        return
+    try:
+        from ccx.codex.runtime import daemon_rpc
+        from ccx.constants import CODEXD_RPC_GENERATION
+        daemon_rpc({
+            "op": "background-refresh",
+            "short": worker_id,
+            "rpcGeneration": CODEXD_RPC_GENERATION,
+        }, timeout=0.25)
+    except Exception:
+        pass  # Notifications do not depend on observer availability.
+
+
 def mutate_registration(
     event_id: str, mutate: Callable[[dict[str, Any]], None]
 ) -> dict[str, Any] | None:
@@ -91,10 +115,16 @@ def mutate_registration(
         if value is None:
             return None
         _original_notification_registration(value)
+        previous = value.get("state")
         mutate(value)
         value["updatedAtMs"] = now_ms()
         _atomic_write(registration_path(event_id), value)
-        return value
+    # Never call codexd while the registration file is locked.
+    if value.get("state") != previous and value.get("state") in {
+        "cancelled", "undeliverable", "delivered",
+    }:
+        _hint_managed_parent_background(value)
+    return value
 
 
 def _settlement_child_thread(reg: dict[str, Any], store) -> str | None:
@@ -350,8 +380,11 @@ def create_registration(
             fcntl.flock(lock, fcntl.LOCK_EX)
             if read_registration(event_id) is None:
                 _assert_no_settlement_cycle(parent_value, wid, store)
-            return publish()
+            published = publish()
+        _hint_managed_parent_background(published)
+        return published
     published = publish()
+    _hint_managed_parent_background(published)
     if worker_engine == "controller":
         # A preflighted, empty supervisor may have retired before this arm.
         # The disk registration is authoritative even if restart is unavailable.
