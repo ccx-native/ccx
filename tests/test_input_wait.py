@@ -230,7 +230,10 @@ def test_terminal_only_permission_prompt_is_shown_then_released(generated_hook_h
         if (rec.get("lifecycle") or {}).get("state") == "waiting" and rec.get("waitingFor"):
             break
         time.sleep(.04)
-    waiting = store.record(A).get("waitingFor")
+    rec = store.record(A)
+    waiting = rec.get("waitingFor")
+    assert waiting, (rec.get("lifecycle"), _hook_log.read_text(errors="replace")[-3000:]
+                     if _hook_log.exists() else "no hook log")
     assert waiting["type"] == "permission" and waiting["id"] is None
     assert waiting["message"] == "Claude needs your permission to use Bash"
     peek = call("peek", A)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
 import time
 
 import test_codex_native_effects as effects
@@ -38,13 +39,12 @@ def _lifecycle(store, state, seconds=5):
 
 
 def _until_exited(pid, seconds=5):
+    # `ps` works on Linux and macOS; a zombie (Z) has already exited.
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        try:
-            with open(f"/proc/{pid}/stat") as stat:
-                if stat.read().rsplit(")", 1)[1].split()[0] == "Z":
-                    return
-        except FileNotFoundError:
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                               capture_output=True, text=True).stdout.strip()
+        if not state or state.startswith("Z"):
             return
         time.sleep(.02)
     raise AssertionError(f"codexd {pid} still running")
