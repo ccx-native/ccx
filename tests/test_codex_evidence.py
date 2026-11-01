@@ -652,3 +652,158 @@ def test_best_effort_hint_never_starts_codexd_or_changes_registry(monkeypatch):
     assert attempts[0][0]["op"] == "background-refresh"
     assert attempts[0][1] <= 0.25
     assert reg["parent"]["workerId"] == "f1111111-1111-4111-8111-111111111111"
+
+def test_codex_background_item_change_emits_when_100_item_preview_unchanged(original_codex):
+    from ccx.codex.daemon.daemon import CodexDaemon
+    from ccx.codex.daemon.worker import Worker
+    from ccx.codex.evidence import BACKGROUND_CHANGED_METHOD
+    from ccx.ops.background import summary, ITEM_LIMIT, materially_changed
+
+    store, _, owner, _tid = original_codex
+    daemon = CodexDaemon()
+    daemon._uuid_store = store
+    worker = Worker(daemon, store.record(owner))
+    try:
+        worker._bg_open = {
+            f"exec-{i}": {
+                "id": f"command:exec-{i}", "kind": "command",
+                "status": "running", "label": "native shell",
+                "started_at_ms": i, "turn": "background-turn",
+            }
+            for i in range(ITEM_LIMIT + 1)
+        }
+        baseline = summary(list(worker._bg_open.values()), as_of_ms=100)
+        worker.record["backgroundTaskSummary"] = baseline
+        worker._save()
+        assert baseline["items_truncated"] == 1
+        # The native item is real even when an unchanged bounded snapshot
+        # cannot fit an item-specific update. This is not a duplicate callback.
+        omitted = dict(worker._bg_open["exec-100"], exit_code=1)
+        with worker.lock:
+            worker._publish_background_locked("event", omitted)
+            worker._save()
+        lines = [row for row in read_journal(owner).events
+                 if row.get("method") == BACKGROUND_CHANGED_METHOD]
+        assert len(lines) == 1
+        assert lines[0]["params"]["item"]["id"] == "command:exec-100"
+        assert lines[0]["params"]["transition"] == "event"
+        assert not materially_changed(baseline, lines[0]["params"]["summary"])
+    finally:
+        worker.evidence.close()
+
+
+def test_native_runtime_retirement_discards_command_guards_and_marks_unknown(original_codex):
+    from ccx.codex.daemon.daemon import CodexDaemon
+    from ccx.codex.daemon.worker import Worker
+    from ccx.codex.evidence import BACKGROUND_CHANGED_METHOD
+    from ccx.ops.background import summary
+
+    store, _, owner, thread_id = original_codex
+    daemon = CodexDaemon()
+    daemon._uuid_store = store
+    worker = Worker(daemon, store.record(owner))
+    open_item = {
+        "id": "command:exec-lost", "kind": "command",
+        "status": "running", "label": "background shell",
+        "turn": "old-turn",
+    }
+    worker._bg_open = {"exec-lost": open_item}
+    worker._bg_candidates = {"exec-pending": {**open_item, "id": "command:exec-pending"}}
+    worker.record["backgroundTaskSummary"] = summary([open_item])
+    worker._save()
+    daemon.workers[owner] = worker
+    daemon.by_thread[thread_id] = owner
+    try:
+        daemon._retire_workers()
+        assert worker._bg_open == {}
+        assert worker._bg_candidates == {}
+        snapshot = store.record(owner)["backgroundTaskSummary"]
+        assert snapshot["available"] is False
+        assert snapshot["running_count"] is None
+        lines = [row for row in read_journal(owner).events
+                 if row.get("method") == BACKGROUND_CHANGED_METHOD]
+        assert len(lines) == 1
+        assert lines[0]["params"]["transition"] == "event"
+        assert lines[0]["params"]["item"] is None
+        assert lines[0]["params"]["summary"]["available"] is False
+    finally:
+        worker.evidence.close()
+
+
+def test_new_codex_owner_reconciles_stale_background_from_lost_runtime(original_codex):
+    from ccx.codex.daemon.daemon import CodexDaemon
+    from ccx.codex.daemon.worker import Worker
+    from ccx.ops.background import summary
+
+    store, _, owner, _tid = original_codex
+    stale = summary([{
+        "id": "command:prior-runtime", "kind": "command",
+        "status": "running", "label": "old command",
+    }], as_of_ms=100)
+    store.mutate_record(owner, patches={"backgroundTaskSummary": stale})
+    daemon = CodexDaemon()
+    daemon._uuid_store = store
+    worker = Worker(daemon, store.record(owner))
+    try:
+        with worker.lock:
+            assert worker._lose_native_background_locked() is True
+            worker._save()
+        assert worker._bg_open == worker._bg_candidates == {}
+        new = store.record(owner)["backgroundTaskSummary"]
+        assert new["available"] is False and new["running_count"] is None
+        with worker.lock:
+            assert worker._lose_native_background_locked() is False
+    finally:
+        worker.evidence.close()
+
+
+@pytest.mark.parametrize("outcome,transition", [
+    ("delivered", "finished"),
+    ("cancelled", "stopped"),
+    ("undeliverable", "failed"),
+    ("missing", "event"),
+])
+def test_codex_notification_disappearance_only_proven_registry_outcomes(
+    original_codex, monkeypatch, outcome, transition,
+):
+    from ccx.codex.daemon.daemon import CodexDaemon
+    from ccx.codex.daemon.worker import Worker
+    from ccx.codex.evidence import BACKGROUND_CHANGED_METHOD
+    import ccx.notify.registry as registry
+
+    store, _, owner, tid = original_codex
+    daemon = CodexDaemon()
+    daemon._uuid_store = store
+    worker = Worker(daemon, store.record(owner))
+    reg = {
+        "parent": {"kind": "ccx-codex", "workerId": owner,
+                   "threadId": tid, "generation": store.generation},
+        "eventId": "f1111111-1111-4111-8111-111111111111",
+        "state": "armed",
+    }
+    rows = [reg]
+    monkeypatch.setattr(registry, "iter_registrations",
+                        lambda *, include_terminal=False: list(rows))
+    try:
+        assert worker.refresh_parent_notifications() is True
+        if outcome == "missing":
+            rows.clear()  # unreadable/pruned rows are likewise absent
+        else:
+            reg["state"] = outcome
+        assert worker.refresh_parent_notifications() is True
+        lines = [row for row in read_journal(owner).events
+                 if row.get("method") == BACKGROUND_CHANGED_METHOD]
+        assert [line["params"]["transition"] for line in lines] == [
+            "started", transition]
+        terminal = lines[-1]["params"]
+        assert terminal["summary"]["pending_count"] == 0
+        if outcome == "missing":
+            assert terminal["item"] is None
+        else:
+            assert terminal["item"]["status"] == {
+                "delivered": "completed",
+                "cancelled": "stopped",
+                "undeliverable": "failed",
+            }[outcome]
+    finally:
+        worker.evidence.close()

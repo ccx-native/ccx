@@ -882,6 +882,7 @@ def _run_host(args):
         "reducer": None, "offset": 0, "items": [],
         "pending": set(), "pending_anonymous": False,
         "last": rec.get("backgroundTaskSummary"), "poll_at": 0.0,
+        "settle_changes": [],
     }
     from ccx.ops.forking import inherited_task_filter
 
@@ -925,7 +926,9 @@ def _run_host(args):
     def publish_bg(new_items: list[dict], changes: list[tuple[str, dict]] | None = None,
                    *, available: bool = True) -> dict:
         snapshot = background_summary(new_items, available=available)
-        if not materially_changed(bg["last"], snapshot):
+        # Even an item outside the 100-item preview can change; only a
+        # snapshot-only refresh with no material change stays silent.
+        if not changes and not materially_changed(bg["last"], snapshot):
             return snapshot
         # Only the host may write this worker's record/journal. A publication
         # failure does not invent a successful prior observation.
@@ -989,6 +992,8 @@ def _run_host(args):
             bg["items"] = new_items
             if publish and changes:
                 publish_bg(new_items, changes)
+            elif not publish and changes:
+                bg["settle_changes"].extend(changes)
         bg["offset"] = offset
         if force:
             bg["pending"].clear()
@@ -1520,8 +1525,10 @@ def _run_host(args):
             if outcome == "interrupted" or interrupted:
                 event["interrupted"] = True
         stamped = broadcast(event)
-        if materially_changed(bg["last"], bg_summary):
-            publish_bg(bg["items"], available=bg_summary["available"])
+        changes = bg["settle_changes"]
+        bg["settle_changes"] = []
+        if changes or materially_changed(bg["last"], bg_summary):
+            publish_bg(bg["items"], changes, available=bg_summary["available"])
         # A pending parent wake must survive a notifyd crash. Checking the
         # registration inventory and restarting notifyd can block on disk/PIDs,
         # so only schedule the work here, never run it in the PTY/select loop.

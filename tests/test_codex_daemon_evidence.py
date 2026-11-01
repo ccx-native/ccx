@@ -40,7 +40,7 @@ def test_idle_kill_does_not_publish_terminal_state_while_still_routable():
     writes = []
     worker = SimpleNamespace(
         short=A, lock=threading.RLock(), native_threads={thread}, teardown_claimed=False,
-        attach_count=0,
+        attach_count=0, _bg_open={},
         record={"lifecycle": {"state": "idle", "since": 1}, "pendingApprovals": []},
         evidence=SimpleNamespace(observed=False, close=lambda: None),
         _journal_lifecycle_locked=lambda **kw: None,

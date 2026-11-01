@@ -65,14 +65,14 @@ def _unload(
                 return
         elif current is not worker or worker.teardown_claimed:
             return
-        if terminal_state == "idle-killed" and not owns_lifecycle:
-            # The janitor's earlier idle check is not an admission
-            # fence. Attach acquires its hold under this same daemon
-            # lock; a successful hold must beat idle-only teardown.
-            with worker.lock:
-                if worker.attach_count or getattr(worker, "_bg_open", None):
+        # Lock order is daemon.lock -> worker.lock. A native callback must
+        # not change the active-command set between the idle-only check
+        # and the final teardown claim.
+        with worker.lock:
+            if terminal_state == "idle-killed" and not owns_lifecycle:
+                if worker.attach_count or worker._bg_open:
                     return
-        worker.teardown_claimed = True
+            worker.teardown_claimed = True
         releases = [
             _fence_release_locked(daemon, thread_id)
             for thread_id in sorted(worker.native_threads)
@@ -152,6 +152,9 @@ def _retire_workers(daemon) -> None:
             _retire_runtime_markers(
                 worker.record,
                 "codexd stopped before the compaction was observed")
+            # This native app-server is gone. Neither its open command IDs
+            # nor foreground candidates can pin the next runtime's janitor.
+            worker._lose_native_background_locked()
             # A server request cannot survive the process that owns its
             # JSON-RPC connection.
             worker.record["pendingApprovals"] = []
@@ -296,7 +299,7 @@ def _janitor_worker(daemon, worker: Worker) -> None:
             state == "idle"
             and timeout > 0
             and worker.attach_count == 0
-            and not getattr(worker, "_bg_open", None)
+            and not worker._bg_open
             and time.monotonic() - worker.last_activity >= timeout
         )
     if expired:
@@ -321,7 +324,7 @@ def _janitor_worker(daemon, worker: Worker) -> None:
                     state == "idle"
                     and timeout > 0
                     and worker.attach_count == 0
-                    and not getattr(worker, "_bg_open", None)
+                    and not worker._bg_open
                     and time.monotonic() - worker.last_activity >= timeout
                 )
             if expired:

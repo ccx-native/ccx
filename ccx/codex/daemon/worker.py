@@ -876,12 +876,14 @@ class Worker:
                 item_id=item_id, reason=reason,
             )
 
-    def _publish_background_locked(self, transition: str, item: dict) -> None:
+    def _publish_background_locked(self, transition: str, item: dict | None) -> None:
         """Journal one actual native change; the caller holds worker.lock."""
         snapshot = background_summary([
             *self._bg_open.values(), *self._bg_notifications.values(),
         ])
-        if not materially_changed(self.record.get("backgroundTaskSummary"), snapshot):
+        if item is None and not materially_changed(
+            self.record.get("backgroundTaskSummary"), snapshot
+        ):
             return
         self.record["backgroundTaskSummary"] = snapshot
         self.evidence.record(
@@ -889,6 +891,34 @@ class Worker:
             {"transition": transition, "item": item, "summary": snapshot},
             thread_id=(self.record.get("native") or {}).get("threadId"),
         )
+
+    def _lose_native_background_locked(self) -> bool:
+        """Drop old-runtime command guards; never assert a native exit.
+
+        Called under worker.lock when this app-server goes away or a new
+        owner adopts a recorded worker. A lost command's outcome is unknown,
+        not completed; the next owned snapshot can correct it.
+        """
+        previous = self.record.get("backgroundTaskSummary")
+        had_native = bool(self._bg_open or self._bg_candidates)
+        self._bg_open.clear()
+        self._bg_candidates.clear()
+        stale_running = (isinstance(previous, dict)
+                         and type(previous.get("running_count")) is int
+                         and previous["running_count"] > 0)
+        if not (had_native or stale_running):
+            return False
+        corrected = background_summary([], available=False)
+        if not materially_changed(previous, corrected):
+            return False
+        self.record["backgroundTaskSummary"] = corrected
+        self.evidence.record(
+            BACKGROUND_CHANGED_METHOD,
+            {"transition": "event", "item": None, "summary": corrected},
+            thread_id=(self.record.get("native") or {}).get("threadId"),
+        )
+        self.record["evidence"] = self.evidence.state()
+        return True
 
     def refresh_parent_notifications(self) -> bool:
         """Read the current registry once; publish only a changed snapshot.
@@ -919,6 +949,7 @@ class Worker:
                         "id": delivery_id, "kind": "notification",
                         "status": "pending", "label": "child result pending",
                         "notification_id": event_id, "delivery_id": delivery_id,
+                        "started_at_ms": reg.get("createdAtMs"),
                     }
                 else:
                     outcomes[delivery_id] = state
@@ -933,11 +964,17 @@ class Worker:
             elif len(removals) == 1 and not additions:
                 item = dict(previous[removals[0]])
                 result = outcomes.get(removals[0])
-                transition, item["status"] = {
+                outcome = {
                     "delivered": ("finished", "completed"),
                     "cancelled": ("stopped", "stopped"),
                     "undeliverable": ("failed", "failed"),
-                }.get(result, ("event", "unknown"))
+                }.get(result)
+                if outcome is None:
+                    # Missing, unreadable or unknown terminal registry row
+                    # proves only a snapshot correction, not delivery.
+                    transition, item = "event", None
+                else:
+                    transition, item["status"] = outcome
             else:
                 transition, item = "event", None
             snapshot = background_summary([
@@ -974,6 +1011,7 @@ class Worker:
                     "kind": "command", "status": "running",
                     # Deliberately no raw native command, paths or output.
                     "label": "background shell", "tool_use_id": item_id,
+                    "started_at_ms": params.get("startedAtMs"),
                 }
         elif method == "turn/completed" and completed_turn:
             turn_id = _turn_id(params)

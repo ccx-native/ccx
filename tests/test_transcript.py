@@ -2923,3 +2923,77 @@ def test_background_reducer_irrelevant_rows_do_not_trigger_snapshots():
         "type": "tool_use", "id": "tu", "name": "Bash",
         "input": {"command": "date", "run_in_background": True}
     }]}}) is True
+
+def test_shared_background_summary_is_stable_bounded_and_monitor_event_large():
+    from ccx.ops.background import summary, diff_items, materially_changed, ITEM_LIMIT
+
+    active = [
+        {"id": f"monitor:{i:03}", "kind": "monitor", "status": "running",
+         "label": "watch", "started_at_ms": 2000 - i,
+         "expires_at_ms": 3000, "event_count": 0}
+        for i in range(ITEM_LIMIT + 1)
+    ]
+    first = summary(active, as_of_ms=100)
+    assert "monitors" not in first
+    assert first["running_count"] == ITEM_LIMIT + 1
+    assert first["items_truncated"] == 1
+    assert len(first["items"]) == ITEM_LIMIT
+    assert first["items"][0]["id"] == "monitor:100"  # earliest start
+    assert first["items"][-1]["id"] == "monitor:001"
+    assert all(item.get("expires_at_ms") == 3000 for item in first["items"])
+
+    # The final omitted item changes, but bounded counts/preview do not.
+    later = [dict(item) for item in active]
+    later[0]["event_count"] = 1
+    later[0]["event"] = "x" * 1400
+    updated = summary(later, as_of_ms=200)
+    assert not materially_changed(first, updated)
+    changes = diff_items(active, later)
+    assert len(changes) == 1
+    assert changes[0][0] == "event"
+    assert changes[0][1]["id"] == "monitor:000"
+
+    # An event within the public preview retains up to 1000 chars,
+    # independent of the 120-char label limit.
+    later[-1]["event"] = "y" * 1400
+    preview = summary(later, as_of_ms=201)
+    assert len(preview["items"][0]["event"]) == 1000
+    assert preview["items"][0]["event"] == "y" * 1000
+    from ccx.ops.background import bounded_event
+    assert bounded_event("one\n  two\tthree") == "one two three"
+
+
+def test_monitor_estimated_deadline_does_not_stop_without_transcript_evidence(tmp_path):
+    from ccx.ops.background import claude_task_item, summary
+
+    transcript = tmp_path / "deadline.jsonl"
+    events = _monitor_launch_events(
+        task_id="monitor-late", timeout_ms=1000,
+        launch_ts="2026-01-01T00:00:00Z")
+    _write_bg_jsonl(transcript, events)
+    reducer = T.BackgroundTaskReducer()
+    for event in T._iter_transcript(transcript):
+        reducer.feed(event)
+    [task] = reducer.tasks()
+    item = claude_task_item(task)
+    assert item["expires_at_ms"] == 1767225601000
+    assert task["status"] == item["status"] == "running"
+    # This snapshot is five seconds after the estimated expiry. A timestamp
+    # is presentation metadata, not evidence of TaskStop or a terminal enqueue.
+    snap = summary([item], as_of_ms=1767225606000)
+    assert snap["running_count"] == 1
+    assert snap["items"][0]["expires_at_ms"] == item["expires_at_ms"]
+    assert T.background_task_current(task, 0)
+
+    late = _monitor_event_notification(
+        task_id="monitor-late", event="late event",
+        ts="2026-01-01T00:00:07Z")
+    reducer.feed(late)
+    [still_running] = reducer.tasks()
+    assert still_running["status"] == "running"
+    assert still_running["event_count"] == 1
+    done = _monitor_terminal_notification(
+        task_id="monitor-late", status="completed",
+        ts="2026-01-01T00:00:08Z")
+    reducer.feed(done)
+    assert reducer.tasks()[0]["status"] == "completed"

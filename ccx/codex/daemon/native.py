@@ -324,6 +324,11 @@ def _adopt_original_native_worker(
             daemon.workers[owner.worker_id] = worker
             daemon.by_thread[thread_id] = owner.worker_id
             daemon.empty_since = None
+        # A newly adopted app-server is not evidence that a command from a
+        # previous native runtime still runs. Repair a surviving stale record.
+        with worker.lock:
+            if worker._lose_native_background_locked():
+                worker._save()
         worker.refresh_parent_notifications()
         return worker
 

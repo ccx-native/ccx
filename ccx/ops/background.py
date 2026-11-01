@@ -10,6 +10,7 @@ import time
 KINDS = ("command", "monitor", "subagent", "notification")
 OPEN = {"running", "pending"}
 LABEL_LIMIT = 120
+EVENT_LIMIT = 1000
 ITEM_LIMIT = 100
 
 
@@ -19,6 +20,14 @@ def label(value: object, fallback: str) -> str:
     return text[:LABEL_LIMIT] or fallback
 
 
+def bounded_event(value: object) -> str | None:
+    """Bound one sanitized Monitor notification; labels remain much shorter."""
+    if not isinstance(value, str):
+        return None
+    return re.sub(r"\s+", " ", value).strip()[:EVENT_LIMIT]
+
+
+
 def summary(items: list[dict], *, as_of_ms: int | None = None,
             available: bool = True) -> dict:
     if as_of_ms is None:
@@ -26,23 +35,26 @@ def summary(items: list[dict], *, as_of_ms: int | None = None,
     if not available:
         return {
             "running_count": None, "pending_count": None, "by_kind": None,
-            "monitors": [], "items": [], "items_truncated": 0,
+            "items": [], "items_truncated": 0,
             "as_of_ms": as_of_ms, "available": False,
         }
     active = [dict(item) for item in items
               if item.get("status") in OPEN and item.get("kind") in KINDS]
     by_kind = {kind: sum(item["kind"] == kind for item in active) for kind in KINDS}
-    monitors = [{"task_id": item["id"], "expires_at_ms": item.get("expires_at_ms")}
-                for item in active if item["kind"] == "monitor"]
+    # Sort once, before applying the display bound. Unknown start times are
+    # after known starts, then every item is ordered by stable ID.
+    active.sort(key=lambda item: (
+        item.get("started_at_ms") if type(item.get("started_at_ms")) is int
+        else float("inf"), item["id"]))
     # Keep snapshots small and deterministic; avoid leaking native content.
-    preview = [{key: item[key] for key in (
-                "id", "kind", "status", "label", "event", "event_count",
-                "expires_at_ms", "notification_id", "delivery_id")
+    preview = [{key: (bounded_event(item[key]) if key == "event" else item[key])
+                for key in ("id", "kind", "status", "label", "event", "event_count",
+                            "expires_at_ms", "notification_id", "delivery_id")
                 if key in item} for item in active[:ITEM_LIMIT]]
     return {
         "running_count": sum(by_kind[kind] for kind in KINDS if kind != "notification"),
         "pending_count": by_kind["notification"],
-        "by_kind": by_kind, "monitors": monitors, "items": preview,
+        "by_kind": by_kind, "items": preview,
         "items_truncated": max(0, len(active) - len(preview)),
         "as_of_ms": as_of_ms, "available": True,
     }
@@ -68,6 +80,7 @@ def claude_task_item(task: dict) -> dict | None:
         "status": task.get("status") or "unknown",
         "label": label(task.get("description"), f"background {kind}"),
         "tool_use_id": task.get("tool_use_id"),
+        "started_at_ms": task.get("launched_at"),
     }
     if kind == "monitor":
         launched, timeout = task.get("launched_at"), task.get("timeout_ms")
@@ -75,7 +88,7 @@ def claude_task_item(task: dict) -> dict | None:
                                  and type(timeout) is int and timeout > 0 else None)
         item["event_count"] = task.get("event_count") or 0
         if task.get("last_event"):
-            item["event"] = label(task["last_event"], "monitor event")
+            item["event"] = bounded_event(task["last_event"])
     if task.get("exit_code") is not None:
         item["exit_code"] = task["exit_code"]
     return item

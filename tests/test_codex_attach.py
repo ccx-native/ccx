@@ -221,7 +221,7 @@ def _attach_daemon(state="idle"):
     daemon._uuid_store = SimpleNamespace(resolve=lambda target: owner)
     worker = SimpleNamespace(
         loaded=True, teardown_claimed=False, lock=threading.RLock(),
-        attach_count=0, last_activity=time.monotonic() - 120,
+        attach_count=0, _bg_open={}, last_activity=time.monotonic() - 120,
         record={"lifecycle": {"state": state},
                 "native": {"threadId": "native-thread"}, "cwd": "/tmp"},
     )
@@ -526,3 +526,72 @@ def test_running_background_command_prevents_janitor_and_idle_unload(monkeypatch
     worker._bg_open.clear()
     daemon._janitor_worker(worker)
     assert idle_kills == [worker]
+
+
+def test_final_idle_unload_claim_is_inside_worker_lock(monkeypatch):
+    daemon, worker = _attach_daemon()
+    worker.short = B
+    worker.native_threads = set()
+    worker.record["lifecycle"]["since"] = 0
+    worker.record["pendingApprovals"] = []
+    worker._journal_lifecycle_locked = lambda **kw: None
+    worker._save = lambda: None
+    worker.evidence = SimpleNamespace(observed=False, close=lambda: None)
+    monkeypatch.setattr(daemon, "_release_native_threads", lambda *_: None)
+
+    # The first admission check must still own this lock at teardown claim.
+    class ClaimLock:
+        def __init__(self):
+            self.inner = threading.RLock()
+            self.first_exit = True
+
+        def __enter__(self):
+            self.inner.acquire()
+            return self
+
+        def __exit__(self, *_):
+            if self.first_exit:
+                assert worker.teardown_claimed is True
+                self.first_exit = False
+            self.inner.release()
+
+    worker.lock = ClaimLock()
+    daemon._unload(worker, terminal_state="idle-killed")
+    assert worker.teardown_claimed is True
+    assert B not in daemon.workers
+
+
+def test_idle_unload_protects_more_than_100_native_commands_but_explicit_kill_wins(monkeypatch):
+    from ccx.ops.background import summary, ITEM_LIMIT
+
+    daemon, worker = _attach_daemon()
+    worker.short = B
+    worker.record["createArgs"] = {"idleTimeout": 1}
+    worker._bg_open = {
+        f"exec-{i}": {"id": f"command:exec-{i}", "kind": "command",
+                      "status": "running", "label": "native shell"}
+        for i in range(ITEM_LIMIT + 1)
+    }
+    snapshot = summary(list(worker._bg_open.values()), as_of_ms=1)
+    assert snapshot["items_truncated"] == 1
+    worker.load_lock = threading.Lock()
+    worker.operation_lock = threading.Lock()
+    worker.kill_intent = threading.Event()
+    worker.killed = threading.Event()
+    monkeypatch.setattr(daemon, "_idle_kill",
+                        lambda _: pytest.fail("tracked command was idle-killed"))
+    daemon._janitor_worker(worker)
+    assert worker.teardown_claimed is False
+
+    # Explicit kill/shutdown paths do not use idle-only admission.
+    worker.native_threads = set()
+    worker.record["lifecycle"]["since"] = 0
+    worker.record["pendingApprovals"] = []
+    worker._journal_lifecycle_locked = lambda **kw: None
+    worker._save = lambda: None
+    worker.evidence = SimpleNamespace(observed=False, close=lambda: None)
+    monkeypatch.setattr(daemon, "_release_native_threads", lambda *_: None)
+    daemon._unload(worker, terminal_state="dead")
+    assert worker.teardown_claimed is True
+    assert worker.record["lifecycle"]["state"] == "dead"
+    assert B not in daemon.workers
