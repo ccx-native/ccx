@@ -498,3 +498,31 @@ def test_sigkill_of_socket_owner_terminates_owned_appserver_group(
                 os.killpg(pids["pgid"], signal.SIGKILL)
             except ProcessLookupError:
                 pass
+
+
+def test_running_background_command_prevents_janitor_and_idle_unload(monkeypatch):
+    daemon, worker = _attach_daemon()
+    worker.short = B
+    worker.record["createArgs"] = {"idleTimeout": 1}
+    worker._bg_open = {"exec": {"id": "command:exec", "kind": "command",
+                                "status": "running", "label": "background shell"}}
+    worker.attach_count = 0
+    worker.load_lock = threading.Lock()
+    worker.operation_lock = threading.Lock()
+    worker.kill_intent = threading.Event()
+    worker.killed = threading.Event()
+    idle_kills = []
+    monkeypatch.setattr(daemon, "_idle_kill",
+                        lambda target: idle_kills.append(target))
+    daemon._janitor_worker(worker)
+    assert idle_kills == []
+    # An already-admitted janitor still cannot tear down the worker if the
+    # command appeared between the second timeout check and final claim.
+    worker._journal_lifecycle_locked = lambda **kw: None
+    worker._save = lambda: None
+    daemon._unload(worker, terminal_state="idle-killed")
+    assert worker.teardown_claimed is False
+    assert daemon.workers[B] is worker
+    worker._bg_open.clear()
+    daemon._janitor_worker(worker)
+    assert idle_kills == [worker]

@@ -70,7 +70,7 @@ def _unload(
             # fence. Attach acquires its hold under this same daemon
             # lock; a successful hold must beat idle-only teardown.
             with worker.lock:
-                if worker.attach_count:
+                if worker.attach_count or getattr(worker, "_bg_open", None):
                     return
         worker.teardown_claimed = True
         releases = [
@@ -296,6 +296,7 @@ def _janitor_worker(daemon, worker: Worker) -> None:
             state == "idle"
             and timeout > 0
             and worker.attach_count == 0
+            and not getattr(worker, "_bg_open", None)
             and time.monotonic() - worker.last_activity >= timeout
         )
     if expired:
@@ -320,6 +321,7 @@ def _janitor_worker(daemon, worker: Worker) -> None:
                     state == "idle"
                     and timeout > 0
                     and worker.attach_count == 0
+                    and not getattr(worker, "_bg_open", None)
                     and time.monotonic() - worker.last_activity >= timeout
                 )
             if expired:

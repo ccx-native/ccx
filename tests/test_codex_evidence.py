@@ -493,3 +493,79 @@ def test_codex_admitted_auto_compact_terminal_is_one_sparse_pair(
         assert lines[-1]["params"]["outcome"] == expected
     finally:
         worker.evidence.close()
+
+
+def test_background_command_promoted_at_turn_end_and_late_exit_pushed(original_codex):
+    from ccx.codex.daemon.daemon import CodexDaemon
+    from ccx.codex.daemon.worker import Worker
+    from ccx.codex.evidence import BACKGROUND_CHANGED_METHOD
+    from ccx.ops.event_feed import _codex_project
+
+    store, _, owner, tid = original_codex
+    daemon = CodexDaemon()
+    daemon._uuid_store = store
+    worker = Worker(daemon, store.record(owner))
+    turn = "background-turn"
+    command = "exec-test"
+    bg_params = {
+        "threadId": tid, "turnId": turn,
+        "item": {"id": command, "type": "commandExecution",
+                 "command": "sleep 25", "status": "inProgress"},
+    }
+    def sparse():
+        return [row for row in read_journal(owner).events
+                if row.get("method") == BACKGROUND_CHANGED_METHOD]
+    try:
+        worker.on_notification("turn/started", {
+            "threadId": tid, "turn": {"id": turn}})
+        worker.on_notification("item/started", bg_params)
+        assert sparse() == []
+        worker.on_notification("turn/completed", {
+            "threadId": tid, "turn": {"id": turn, "status": "completed"}})
+        events = sparse()
+        assert len(events) == 1 and events[0]["params"]["transition"] == "started"
+        assert events[0]["params"]["summary"]["running_count"] == 1
+        assert worker.record["lifecycle"]["state"] == "idle"
+        assert worker._bg_open
+        worker.on_notification("item/completed", {
+            **bg_params, "item": {**bg_params["item"],
+                                   "status": "completed", "exitCode": 0}})
+        events = sparse()
+        assert [row["params"]["transition"] for row in events] == [
+            "started", "finished"]
+        assert events[-1]["params"]["summary"]["running_count"] == 0
+        assert worker._bg_open == {}
+        assert store.record(owner)["backgroundTaskSummary"]["running_count"] == 0
+        assert _codex_project(events[-1])["kind"] == "background.changed"
+        # A replayed native exit must not double-publish completion.
+        worker.on_notification("item/completed", {
+            **bg_params, "item": {**bg_params["item"],
+                                   "status": "completed", "exitCode": 0}})
+        assert len(sparse()) == 2
+    finally:
+        worker.evidence.close()
+
+
+def test_foreground_command_is_not_background(original_codex):
+    from ccx.codex.daemon.daemon import CodexDaemon
+    from ccx.codex.daemon.worker import Worker
+    from ccx.codex.evidence import BACKGROUND_CHANGED_METHOD
+    store, _, owner, tid = original_codex
+    daemon = CodexDaemon()
+    daemon._uuid_store = store
+    worker = Worker(daemon, store.record(owner))
+    try:
+        worker.on_notification("turn/started", {
+            "threadId": tid, "turn": {"id": "foreground"}})
+        item = {"threadId": tid, "turnId": "foreground",
+                "item": {"id": "fast", "type": "commandExecution",
+                         "status": "completed", "exitCode": 0}}
+        worker.on_notification("item/started", item)
+        worker.on_notification("item/completed", item)
+        worker.on_notification("turn/completed", {
+            "threadId": tid, "turn": {"id": "foreground", "status": "completed"}})
+        assert worker._bg_open == {}
+        assert not [row for row in read_journal(owner).events
+                    if row.get("method") == BACKGROUND_CHANGED_METHOD]
+    finally:
+        worker.evidence.close()

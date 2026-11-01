@@ -7,8 +7,9 @@ import time
 import uuid
 from copy import deepcopy
 from typing import Any
-from ccx.codex.evidence import COMPACTION_CONTEXT_METHOD, COMPACT_STARTED_METHOD, COMPACT_ENDED_METHOD, INPUT_REQUESTED_METHOD, INPUT_RESOLVED_METHOD, JOURNALED_METHODS, LIFECYCLE_METHOD, EvidenceJournal, read_index as read_evidence_index, read_journal as read_compact_journal
+from ccx.codex.evidence import BACKGROUND_CHANGED_METHOD, COMPACTION_CONTEXT_METHOD, COMPACT_STARTED_METHOD, COMPACT_ENDED_METHOD, INPUT_REQUESTED_METHOD, INPUT_RESOLVED_METHOD, JOURNALED_METHODS, LIFECYCLE_METHOD, EvidenceJournal, read_index as read_evidence_index, read_journal as read_compact_journal
 from ccx.codex.notify_history import notification_delivery_match
+from ccx.ops.background import label as background_label, summary as background_summary, materially_changed
 from ccx.codex.protocol import AppServerClient, ProtocolError, ProtocolNotSent, ProtocolTransportError
 from ccx.codex.reports import native_timestamp_ms, report_from_item, should_replace_live_report
 from ccx.codex.records import now_ms
@@ -124,6 +125,10 @@ class Worker:
         self.teardown_claimed = False
         self.last_activity = time.monotonic()
         self.attach_count = 0  # live attach RPC connections, never persisted
+        # Native commands become background only if still open at turn/completed.
+        # The journal is the source; these are this app-server's owned live IDs.
+        self._bg_candidates: dict[str, dict] = {}
+        self._bg_open: dict[str, dict] = {}
         # The last record write a notification handler could not make (disk
         # full, permissions). The in-memory record stays authoritative.
         self.persistence_error: dict[str, Any] | None = None
@@ -263,7 +268,7 @@ class Worker:
             "compactCount", "evidence", "tokenUsage", "historyKnownEmpty",
             "nativeArchive", "resolvedModel", "parentNotifyFences",
             "lastTurnError", "pendingSend", "lastConversation", "nativeTurnStart",
-            "quotaStop",
+            "quotaStop", "backgroundTaskSummary",
         }
         for key in set(before) | set(desired):
             if key in ("recordRevision", "updatedAt"):
@@ -862,6 +867,75 @@ class Worker:
                 item_id=item_id, reason=reason,
             )
 
+    def _publish_background_locked(self, transition: str, item: dict) -> None:
+        """Journal one actual native change; the caller holds worker.lock."""
+        snapshot = background_summary(list(self._bg_open.values()))
+        if not materially_changed(self.record.get("backgroundTaskSummary"), snapshot):
+            return
+        self.record["backgroundTaskSummary"] = snapshot
+        self.evidence.record(
+            BACKGROUND_CHANGED_METHOD,
+            {"transition": transition, "item": item, "summary": snapshot},
+            thread_id=(self.record.get("native") or {}).get("threadId"),
+        )
+
+    def _background_native_locked(
+        self, method: str, params: dict, completed_turn: bool,
+    ) -> None:
+        native = self.record.get("native") or {}
+        if params.get("threadId") != native.get("threadId"):
+            return
+        if method == "item/started":
+            item = params.get("item") or {}
+            tid = params.get("turnId")
+            item_id = item.get("id") if isinstance(item, dict) else None
+            if (item.get("type") == "commandExecution"
+                    and isinstance(item_id, str) and item_id
+                    and isinstance(tid, str) and tid
+                    and tid == self.record["lifecycle"].get("activeTurnId")):
+                self._bg_candidates[item_id] = {
+                    "turn": tid, "id": "command:" + item_id,
+                    "kind": "command", "status": "running",
+                    # Deliberately no raw native command, paths or output.
+                    "label": "background shell", "tool_use_id": item_id,
+                }
+        elif method == "turn/completed" and completed_turn:
+            turn_id = _turn_id(params)
+            for item_id, item in list(self._bg_candidates.items()):
+                if item["turn"] != turn_id:
+                    continue
+                del self._bg_candidates[item_id]
+                if item_id not in self._bg_open:
+                    self._bg_open[item_id] = item
+                    self._publish_background_locked("started", item)
+        elif method == "item/completed":
+            item = params.get("item") or {}
+            item_id = item.get("id") if isinstance(item, dict) else None
+            if not isinstance(item_id, str):
+                return
+            candidate = self._bg_candidates.get(item_id)
+            if candidate is not None and candidate["turn"] == params.get("turnId"):
+                del self._bg_candidates[item_id]  # normal foreground command
+            active = self._bg_open.get(item_id)
+            if active is None or active["turn"] != params.get("turnId"):
+                return
+            exit_code = item.get("exitCode")
+            if type(exit_code) is int:
+                status = "completed" if exit_code == 0 else "failed"
+            elif item.get("status") == "failed":
+                status = "failed"
+            else:
+                status = "unknown"
+            terminal = {key: value for key, value in active.items() if key != "turn"}
+            terminal["status"] = status
+            if type(exit_code) is int:
+                terminal["exit_code"] = exit_code
+            del self._bg_open[item_id]
+            self._publish_background_locked(
+                {"completed": "finished", "failed": "failed"}.get(status, "event"),
+                terminal,
+            )
+
     def on_notification(self, method: str, params: dict[str, Any]) -> None:
         # Journal the authoritative native event first, while it is still the
         # thing the app-server sent, rather than after it has been folded into
@@ -1374,6 +1448,8 @@ class Worker:
                         "willRetry": bool(params.get("willRetry", False)),
                         "observedAtMs": now_ms(),
                     }
+            if method in {"item/started", "item/completed", "turn/completed"}:
+                self._background_native_locked(method, params, completed_turn)
             if not journaled and not changed:
                 return
             if journaled:
