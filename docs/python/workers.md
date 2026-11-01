@@ -78,7 +78,7 @@ an exception.
 Claude also accepts `next_turn=True`, which waits for the worker's *next* turn
 to finish, such as the one a background task starts when it ends. `after_turn`
 (a `turn_ref`) and `known_input` (a pending request you've already seen) narrow
-it. Claude results list the worker's `background_tasks`.
+it. Results also list the worker's background work as `background_tasks`.
 
 ### `report(worker, *, max_chars=None, turn_ref=None, timeout=30)`
 
@@ -92,7 +92,8 @@ raises `SessionUnavailable`.
 
 What ccx has recorded, without asking the engine. `status` returns `name`,
 `cwd`, `state`, `pending_input`, `managed_turns`, `requested_model`,
-`observed_model`, `context` and more; `list` returns `{"workers": [...]}`.
+`observed_model`, `context`, `background_task_summary` (see
+[Background work](../concepts.md#background-work)) and more; `list` returns `{"workers": [...]}`.
 `parent` lists the workers another worker created.
 
 `recap(handles)` summarizes several workers at once, including a printable
@@ -148,7 +149,13 @@ Every event has `kind`, `type` (the engine's own name), `ts`, `cursor`, and
 | `tool.finished` | `tool`, `tool_use_id`, `ok`, `duration_ms`, `result_preview` |
 | `input.requested` / `input.resolved` | `request`, `request_id`, Codex `decision` |
 | `compact.started` / `compact.ended` | `outcome` on the end event |
+| `delivery.changed` | Codex: `delivery_id`, `status`; a cue to check that delivery again |
+| `background.changed` | `transition`, `item`, `summary` |
+| `context.changed` | `context` |
 | `error` | the error's details |
+
+The last two are described in [Following changes](../concepts.md#following-changes),
+including how to start a view without missing an event.
 
 Engine-specific events also come through, with `kind=None`. Cursors are opaque
 strings; keep the last one and pass it as `after`. If a cursor can't be placed

@@ -44,7 +44,7 @@ limit; keep `timeout_ms` larger to leave time for the final response.
 Optional `kinds` filters events:
 
 ```json
-["state","turn.started","turn.ended","tool.started","tool.finished","input.requested","input.resolved","compact.started","compact.ended","error","delivery.changed"]
+["state","turn.started","turn.ended","tool.started","tool.finished","input.requested","input.resolved","compact.started","compact.ended","error","delivery.changed","background.changed","context.changed"]
 ```
 
 A nonnull `gap` means some history could not be continued from the cursor.
@@ -53,6 +53,11 @@ may be replayed. Make event processing tolerant of duplicates.
 `runtime` is `live`, `gone` or `unknown`; an empty page or an unknown runtime
 does not prove the worker has stopped. Events can trigger a fresh `worker.wait`
 or `turn.reconcile`; they do not replace those results.
+
+`background.changed` and `context.changed` carry the worker's background work
+and context size as they change; `worker.inspect` returns the same values for
+a starting point. Their fields and the order to read them in are in
+[Following changes](../concepts.md#following-changes).
 
 ## Usage
 
