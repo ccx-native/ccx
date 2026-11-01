@@ -31,10 +31,9 @@ don't rely on a separately started Bash or zsh loading it. Use a direct call in
 the worker's tool shell. Neither engine passes variables implicitly to a new
 ccx worker; [share them explicitly](sharing.md).
 
-If your Codex configuration sets `shell_environment_policy.include_only`, include
-`BASH_ENV`, `ZDOTDIR`, `CCX_ROOT`, `CCX_SELF_WORKER_ID` and `CCX_SELF_ENGINE`.
-Otherwise Codex workers lose their variables, and ccx can't tell which worker a
-command came from.
+If you set Codex's `shell_environment_policy.include_only`, keep `BASH_ENV`,
+`ZDOTDIR`, `CCX_ROOT`, `CCX_SELF_WORKER_ID` and `CCX_SELF_ENGINE` in it so
+variables and worker identification still work.
 
 ## Selecting Python for live objects
 

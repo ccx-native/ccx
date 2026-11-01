@@ -1,6 +1,6 @@
 ---
 name: ccx
-description: Run persistent Claude Code and Codex workers with the ccx CLI. Start workers, send follow-ups, wait or get notified, read replies, and coordinate work with Python controllers.
+description: Run persistent Claude Code and Codex workers with the ccx CLI. Start workers, send follow-ups, wait or get notified, read replies, and run controllers.
 ---
 
 # ccx workers
@@ -39,11 +39,11 @@ ccx send "$W" "Now add a regression test."
   default. Claude can background a long wait and let its harness wake it.
 - **Codex parent:** add `--notify-parent` to `new`, `send` or `compact`, or arm a
   running worker with `ccx notify TARGET`. Then carry on or end your turn: ccx
-  resumes you when it settles. Don't wait, sleep or poll. This works from a ccx
-  Codex worker, the Codex app, or a default `codex` terminal. A `codex` started
-  with `-c`, `--profile` or `--no-daemon`, and `codex exec`, can't be woken; ccx
-  refuses and says to wait instead. In the notification, trust the turn's
-  `status`; `workerState` is only a hint.
+  resumes you when it settles. Don't wait, sleep or poll. Your own Codex app or
+  terminal must have its thread loaded on Codex's shared app-server; ccx Codex
+  parents also work. If ccx refuses notifications, use `--wait` or `ccx wait`.
+  Trust the notification's `status`; `workerState` is only a hint. See
+  [notification details](https://github.com/oneferdev/ccx/blob/main/docs/codex.md#codex-as-the-orchestrator).
   Run `ccx` with full access: it starts processes and writes outside the workspace.
 - `--no-wait` returns at once and wakes nobody.
 
@@ -54,7 +54,7 @@ ccx send "$W" "Now add a regression test."
 | idle or stopped | `send`; stopped workers revive with their history. |
 | busy | `steer TARGET "..."`, or let it settle before `send`. |
 | waiting for input | `peek`, then `approve`/`reject` a permission request; on Claude, `answer` a question or `respond` to an MCP form. `send` is refused. |
-| going the wrong way | `stop` cancels the turn, not background work it started. `kill` stops the runtime; `send` revives it with its history. |
+| going the wrong way | `stop` requests cancellation; background work can keep running. `kill` stops the worker; `send` revives it with its history. |
 
 ## Reading results
 
@@ -115,24 +115,10 @@ between workers or when `python3` doesn't see the variables.
 
 ## Controllers: programmable workflows that run unattended
 
-A controller is a Python script that drives many workers on its own, so you
-don't have to start, wait on and collect each one by hand. It's ordinary
-Python: it can branch on results, loop or fan out as the work requires. Its
-steps are recorded, so a run can stop for a decision and resume later without
-redoing finished steps, and workers hand back structured results through
-shared variables instead of prose. A few lines from one:
-
-```python
-futures = [review.submit(area) for area in ("api", "storage")]  # workers in parallel
-findings = [f.result() for f in futures]                         # structured results
-if not current.inputs:                                           # stop for a decision
-    current.report(status="needs-review", checkpoint="findings", data=findings)
-    return
-```
-
-Start one with `ccx controller run SCRIPT` (a Codex parent adds
-`--notify-parent` before the script). Read
-[references/controllers.md](references/controllers.md) before writing one.
+A controller script coordinates workers and records finished steps, so it can
+resume without redoing them. Start one with `ccx controller run SCRIPT`
+(a Codex parent adds `--notify-parent` before the script). See
+[references/controllers.md](references/controllers.md) to run, inspect or resume one.
 
 ## When something looks off
 

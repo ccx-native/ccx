@@ -82,8 +82,8 @@ If usage can't be read, the turn keeps running.
 - `ccx logs TARGET --full`: conversation JSON without tool-result truncation,
   including stopped workers. Claude's `--jsonl` gives the raw transcript.
 - `ccx events TARGET --follow`: lifecycle events for diagnostics.
-- `ccx import ID`: bring an idle Claude session into ccx, or copy a Codex
-  thread into a new worker.
+- `ccx import ID`: bring an idle Claude session into ccx, or fork a Codex
+  thread whose latest turn completed.
 
 ## Engine differences
 

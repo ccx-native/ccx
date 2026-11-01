@@ -46,8 +46,8 @@ For example `stopped` covers `idle-killed` (unloaded after idling), `dead`
 - `steer` adds a message to the turn that is running.
 - `answer`, `approve`/`reject` and `respond` reply to whatever the turn is waiting
   for.
-- `stop` cancels the running turn; the worker stays up. It doesn't end
-  [background work](#background-work) the turn started.
+- `stop` requests cancellation of the running turn; the worker stays up.
+  [Background work](#background-work) can keep running.
 
 Each `send` or `steer` has a **delivery id**, generated unless you pass
 `--delivery-id`. Repeating the same message with that id never delivers twice.
@@ -74,44 +74,41 @@ Then read the reply with `ccx report`, or check on a worker with `ccx peek`.
 
 ## Background work
 
-A worker can leave work running after its turn ends: a background shell
-command, a Claude Monitor or async subagent, or a notification to its parent
-that hasn't been delivered yet. ccx keeps a summary of it on the worker, shown
-by `ccx peek` and returned as `background_task_summary` by Python
-`status()` and RPC `worker.inspect`:
+A worker's turn can end while a shell command, Claude Monitor or async
+subagent keeps running. `ccx peek` summarizes this work and, for a Codex parent,
+notifications waiting to reach it. Python `status()` returns the summary as
+`background_task_summary`; RPC `worker.inspect` puts it in
+`result.worker_view.background_tasks.summary`.
 
-- `running_count` counts running commands, Monitors and subagents;
-  `pending_count` counts undelivered notifications; `by_kind` splits both by
-  kind.
-- `items` lists up to 100 of them, oldest first, each with an `id`, `kind`,
-  `status` and short `label`. `items_truncated` says how many were left out.
-- `available` is false when ccx couldn't read the background state; the counts
-  are then null.
+- `running_count` counts running commands, Monitors and subagents; `pending_count`
+  counts notifications. `by_kind` breaks down the counts.
+- `items` lists up to 100 active items, oldest first, with `id`, `kind`,
+  `status` and `label`. `items_truncated` counts omitted items.
+- `available: false` means the state couldn't be read; counts are then null.
 
-When background work finishes, Claude starts a new turn to handle it. Codex
-doesn't: a command still running when its turn ends shows here until it
-exits. Either way, a worker isn't stopped for idling while something in it is
-still running.
+Claude can start another turn when background work reports back. Codex commands
+don't start follow-up turns; they stay in the summary until they exit. Running
+background work prevents idle shutdown on both engines.
 
 ## Following changes
 
-Two events report changes as they happen, so you don't need to poll:
+Follow `background.changed` and `context.changed` with `ccx events TARGET --follow`,
+Python `events()` / `follow()`, or RPC `worker.events`:
 
 - `background.changed` has `transition` (`started`, `event`, `finished`,
   `failed`, `stopped` or `reopened`), the `item` that changed, and the new
-  `summary`. `item` is null when several things changed at once or ccx
-  corrected the summary.
+  `summary`. `item` is null for a summary-only update.
 - `context.changed` has `context`, with the same fields as `ccx context`:
   `tokens_used`, `window_size`, `percent_used`, `as_of_turn_ref`, `as_of_ms`
-  and `reason`. It comes at most every 5 seconds during a turn, and always at
-  the end of a turn and around a compaction (`reason` is `compacting`, then
-  `just_compacted` with `tokens_used` null until the next reading).
+  and `reason`. Unchanged values are skipped. During a turn, updates are at
+  least 5 seconds apart; turn end and compaction publish changes immediately.
+  During compaction, `reason` is `compacting`, then `just_compacted`, with
+  `tokens_used` null until the next reading.
 
-Each event carries the full current value, so apply it as the new state;
-seeing one twice is harmless. To start a view without missing anything, read
-the current event cursor first, then the worker's status, then follow events
-from that cursor. After a `gap`, read the status again. Once you're following
-events, prefer them over periodic status reads, which can be older.
+Replace the displayed summary or context with each event's full value; replaying
+an event is harmless. To start a live view, get an event cursor with `tail=0`,
+read the worker's status, then follow from that cursor. After a `gap`, read
+status again. Prefer events to periodic status reads, which can be older.
 
 ## Engine differences
 
@@ -140,8 +137,7 @@ lists what differs between the engines.
 - **Requested and actual model are kept apart.** Worker status in Python and RPC
   has `requested_model` and `observed_model`; they can differ, and the second
   may be empty until the engine reports it.
-- **Pending notifications can show late.** While a Codex parent isn't loaded,
-  the pending notifications in its background summary can stay out of date
-  until it loads again. Delivery itself isn't affected.
+- **Pending notifications can show late.** An unloaded Codex parent's summary
+  can be stale until it loads again; delivery isn't affected.
 - **No cache verdict.** ccx doesn't report whether a worker's prompt cache is
   still warm.

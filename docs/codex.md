@@ -52,20 +52,18 @@ started with `--notify-parent`, so the parent hears back once the whole subtree
 is done. ccx refuses blocking waits from a Codex parent with a message saying
 what to use instead.
 
-**Which sessions can be woken:** a ccx Codex worker, the Codex app, and a
-`codex` terminal on Codex's shared app-server, which is the default. A `codex`
-started with `-c`, `--profile` or `--no-daemon`, and `codex exec`, run their own
-app-server, so ccx refuses `--notify-parent` there; wait with `--wait` instead.
-On the shared app-server, the parent's commands run in that server's
-environment, not the terminal's: a `CCX_ROOT` or `PATH` set only in the terminal
-doesn't reach `ccx`.
+**Which sessions can be woken:** a ccx Codex worker, or your own Codex app or
+terminal session whose thread is loaded on Codex's shared app-server. ccx
+checks this before accepting `--notify-parent`; if refused, use `--wait` or
+`ccx wait` instead. For a shared-server session, set `CCX_ROOT` and `PATH` in
+the server's environment; setting them only in the terminal won't reach its
+commands.
 
-ccx wakes your own Codex session only while its window has the thread open,
-and never resumes it in the background. A notification it can't deliver within
-an hour expires; `ccx report` still has the result. A ccx Codex worker that's
-stopped, killed or capped gets its notifications when it's revived. In a
-notification, trust the turn's `status`; `workerState` is only a hint and can
-still say busy.
+Keep your own Codex thread open to receive notifications. ccx won't resume it
+in the background; notifications expire an hour after becoming ready for
+delivery. Read missed results with `ccx report`. Idle-unloaded ccx parents
+reload automatically; killed or capped parents receive notifications after you
+revive them. Trust the notification's `status`; `workerState` can still say busy.
 
 **Sandbox:** ccx starts processes and writes outside the workspace, so it can't
 run inside Codex's sandbox. Inside the sandbox it refuses at once and says so.
@@ -96,15 +94,12 @@ shows their replies.
 - **The app-server protocol can change.** See
   [Troubleshooting](troubleshooting.md#after-upgrading-claude-code-or-codex).
 - **An import is a fork.** `ccx import` copies a Codex thread into a new worker;
-  later turns in either one don't reach the other. Like any fork, it reads the
-  original thread's history: archiving the original is fine, but deleting it
-  breaks the worker.
-- **A running command outlives `stop` and `kill`.** A command Codex is already
-  running keeps going until it exits or `ccx shutdown --engine codex` stops
-  Codex's app-server.
+  its latest turn must have completed. Later turns in either one don't reach
+  the other. Like any fork, it reads the original thread's history: archiving
+  the original is fine, but deleting it breaks the worker.
+- **Commands can outlive `stop` and `kill`.** Use
+  `ccx shutdown --engine codex` to stop their app-server.
 - **Questions and MCP forms are unsupported; permissions are fixed at creation.**
   See [Permissions](permissions.md#known-limitations).
-- **A fork depends on its source thread**: Codex references the source's history
-  rather than copying it.
 - **Attach:** Codex may show its own startup prompts, and model or permission
   changes made in the TUI don't change what ccx uses for its own sends.

@@ -85,16 +85,17 @@ it. Results also list the worker's background work as `background_tasks`.
 The final reply of the latest finished turn: `text`, `has_final_message`,
 `truncated`, `turn_ref`, `delivery_id` and `status`. `turn_ref` (from `wait` or
 `send`) reads exactly that turn instead. A turn that ended with tool calls only
-returns `text=""` and `has_final_message=False`. While a newer turn is running,
-waiting for input or has failed, it returns the last confirmed reply with a
-`note` saying so. With no finished turn yet it raises `SessionUnavailable`.
+returns `text=""` and `has_final_message=False`. While a newer turn is running
+or waiting for input, it returns the last confirmed reply with a `note`.
+A failed or interrupted turn can return empty text; check `status` and `note`.
+With no finished turn yet it raises `SessionUnavailable`.
 
 ### `status(worker)` and `list(*, engine=None, cwd=None, state=None, parent=None, limit=None)`
 
 What ccx has recorded, without asking the engine. `status` returns `name`,
 `cwd`, `state`, `pending_input`, `managed_turns`, `requested_model`,
-`observed_model`, `context`, `background_task_summary` (see
-[Background work](../concepts.md#background-work)) and more; `list` returns `{"workers": [...]}`.
+`observed_model`, `context` and `background_task_summary` (see
+[Background work](../concepts.md#background-work)). `list` returns `{"workers": [...]}`.
 `parent` lists the workers another worker created.
 
 `recap(handles)` summarizes several workers at once, including a printable
@@ -155,8 +156,8 @@ Every event has `kind`, `type` (the engine's own name), `ts`, `cursor`, and
 | `context.changed` | `context` |
 | `error` | the error's details |
 
-The last two are described in [Following changes](../concepts.md#following-changes),
-including how to start a view without missing an event.
+See [Following changes](../concepts.md#following-changes) for background and
+context event fields and how to start a live view.
 
 Engine-specific events also come through, with `kind=None`. Cursors are opaque
 strings; keep the last one and pass it as `after`. If a cursor can't be placed

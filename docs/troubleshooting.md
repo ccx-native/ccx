@@ -58,20 +58,15 @@ ccx peek "$W" --status   # just the state
 
 ## Claude workers say "Not logged in"
 
-- **Started from a Claude worker, with a token login.** With
-  `claude setup-token`, your login is only the `CLAUDE_CODE_OAUTH_TOKEN`
-  variable, and Claude Code removes it from the shell its tools run in. A Claude
-  worker started by another Claude worker then comes up not logged in. Log in
-  with `/login` instead, or set `CLAUDE_ENV_FILE`, in the environment you run
-  ccx from, to a file containing
-  `export CLAUDE_CODE_OAUTH_TOKEN="$(cat ~/.config/claude-token)"`. Every command
-  the model runs can then read your token, so only do this on a machine you
-  control. Codex parents aren't affected, unless your Codex shell policy
-  excludes `*TOKEN*` variables; ccx doesn't override that policy.
-- **On macOS over SSH.** The login Keychain is locked for SSH sessions, even
-  while you're logged in at the desktop. Run `security unlock-keychain` in the
-  SSH session, and start or revive Claude workers only from that session, or use
-  `claude setup-token`.
+- **Token login (`claude setup-token`).** Check that the environment launching
+  ccx has `CLAUDE_CODE_OAUTH_TOKEN`; ccx inherits it. Claude Code tool shells
+  can omit it, leaving workers they start without a login. Use `/login`, or set
+  `CLAUDE_ENV_FILE` before launching ccx to a file that exports your saved token.
+  This makes the token available to worker commands. From Codex, check that its
+  shell environment policy passes the token through.
+- **macOS over SSH.** If the login Keychain is locked, run
+  `security unlock-keychain`, then start or revive workers from that SSH session.
+  A desktop login alone may not unlock it for SSH. Token login is another option.
 
 ## A worker stopped or failed
 
@@ -119,9 +114,9 @@ two versions (`claude --version`, `codex --version`, `ccx --version`).
 - Status can lag behind a crashed process; use `wait` to check whether a turn
   has finished.
 - A timeout doesn't cancel a worker's turn. Use `ccx stop` if you want to cancel it.
-- Claude Stop or UserPromptSubmit hooks that block or loop (loop plugins, test
-  or review gates) aren't supported in workers. ccx ends the turn at the first
-  Stop, so a wait or notification can return early and usage caps stop applying.
-  A blocking UserPromptSubmit hook leaves the worker busy until `ccx stop`.
+- Claude hooks that block Stop or UserPromptSubmit aren't supported. ccx treats
+  the first Stop as the turn's end: waits and notifications can return while a
+  hook keeps Claude working, without the turn's usage cap. A blocking
+  UserPromptSubmit hook can leave the worker busy; use `ccx stop`.
 - On macOS, select a store with the same spelling it was created with (case and
   accents).

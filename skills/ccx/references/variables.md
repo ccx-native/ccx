@@ -31,7 +31,7 @@ ccx runs their Python calls one at a time.
 
 ```bash
 B=$(ccx new --engine claude --cwd ~/repo --vars-from "$W" \
-      "With python3, replace each item of result['issues'] with {'text': item, 'priority': 'high' or 'low'}.")
+      "With python3, replace each string in result['issues'] with a dict: text holds the string, priority is high or low.")
 ```
 
 `--var` and `--vars-from` can't be combined in one command. A `fork` doesn't
@@ -41,8 +41,7 @@ workers a worker starts never inherit its variables.
 ## Rules
 
 - Variables need full permissions (the default).
-- Values attached from the CLI are JSON. A controller can attach live Python
-  objects instead; see [controllers.md](controllers.md).
+- Values attached from the CLI are JSON.
 - Only direct `python`/`python3` sees them. `command python3`, `env python3`,
   a full interpreter path and scripts run through a shebang get normal Python.
   In Codex workers, nested bash and zsh keep them; in Claude workers, call
@@ -56,7 +55,5 @@ Check the worker's exact command and its selected Python with
 such as `python3 -u` bypass variables. On stock macOS, a non-login shell can
 find Apple's older `/usr/bin/python3`, which can't run them.
 
-Live controller objects require Python to match the controller's version and
-platform; otherwise ccx runs ordinary Python with a warning. Saved JSON has no
-matching-version check, but needs Python capable of running ccx's variable
-support. See [variable troubleshooting](https://github.com/oneferdev/ccx/blob/main/docs/variables/troubleshooting.md).
+The selected Python must be able to run ccx's variable support. See
+[variable troubleshooting](https://github.com/oneferdev/ccx/blob/main/docs/variables/troubleshooting.md).

@@ -50,14 +50,12 @@ Optional `kinds` filters events:
 A nonnull `gap` means some history could not be continued from the cursor.
 Refresh live worker state and reconcile affected deliveries; retained events
 may be replayed. Make event processing tolerant of duplicates.
-`runtime` is `live`, `gone` or `unknown` (always `unknown` on macOS); an empty page or an unknown runtime
-does not prove the worker has stopped. Events can trigger a fresh `worker.wait`
-or `turn.reconcile`; they do not replace those results.
+`runtime` is `live`, `gone` or `unknown` (always `unknown` on macOS). An empty
+page or unknown runtime does not prove the worker has stopped. Events can
+trigger a fresh `worker.wait` or `turn.reconcile`; they do not replace those results.
 
-`background.changed` and `context.changed` carry the worker's background work
-and context size as they change; `worker.inspect` returns the same values for
-a starting point. Their fields and the order to read them in are in
-[Following changes](../concepts.md#following-changes).
+For `background.changed` and `context.changed` fields and how to start a live
+view with `worker.inspect`, see [Following changes](../concepts.md#following-changes).
 
 ## Usage
 
