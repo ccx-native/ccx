@@ -80,9 +80,11 @@ COMPACT_ENDED_METHOD = "ccx/compact/ended"
 # accepted. It is never evidence: readers reconcile the delivery id.
 DELIVERY_CHANGED_METHOD = "ccx/delivery/changed"
 BACKGROUND_CHANGED_METHOD = "ccx/background/changed"
+CONTEXT_CHANGED_METHOD = "ccx/context/changed"
 FEED_METHODS = frozenset({
     DELIVERY_CHANGED_METHOD,
     BACKGROUND_CHANGED_METHOD,
+    CONTEXT_CHANGED_METHOD,
     LIFECYCLE_METHOD,
     INPUT_REQUESTED_METHOD,
     INPUT_RESOLVED_METHOD,

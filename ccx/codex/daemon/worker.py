@@ -7,9 +7,10 @@ import time
 import uuid
 from copy import deepcopy
 from typing import Any
-from ccx.codex.evidence import BACKGROUND_CHANGED_METHOD, COMPACTION_CONTEXT_METHOD, COMPACT_STARTED_METHOD, COMPACT_ENDED_METHOD, INPUT_REQUESTED_METHOD, INPUT_RESOLVED_METHOD, JOURNALED_METHODS, LIFECYCLE_METHOD, EvidenceJournal, read_index as read_evidence_index, read_journal as read_compact_journal
+from ccx.codex.evidence import CONTEXT_CHANGED_METHOD, BACKGROUND_CHANGED_METHOD, COMPACTION_CONTEXT_METHOD, COMPACT_STARTED_METHOD, COMPACT_ENDED_METHOD, INPUT_REQUESTED_METHOD, INPUT_RESOLVED_METHOD, JOURNALED_METHODS, LIFECYCLE_METHOD, EvidenceJournal, read_index as read_evidence_index, read_journal as read_compact_journal
 from ccx.codex.notify_history import notification_delivery_match
 from ccx.ops.background import label as background_label, summary as background_summary, materially_changed
+from ccx.ops.context_events import ContextChanges
 from ccx.codex.protocol import AppServerClient, ProtocolError, ProtocolNotSent, ProtocolTransportError
 from ccx.codex.reports import native_timestamp_ms, report_from_item, should_replace_live_report
 from ccx.codex.records import now_ms
@@ -127,6 +128,9 @@ class Worker:
         self.attach_count = 0  # live attach RPC connections, never persisted
         # Native commands become background only if still open at turn/completed.
         # The journal is the source; these are this app-server's owned live IDs.
+        # Public context emission is one sparse stream, independent of raw native
+        # usage notifications. Reuse the existing daemon janitor for pending flush.
+        self._context_changes = ContextChanges()
         self._bg_candidates: dict[str, dict] = {}
         self._bg_open: dict[str, dict] = {}
         # No replay ledger: a persisted snapshot is enough to compare current
@@ -876,6 +880,52 @@ class Worker:
                 item_id=item_id, reason=reason,
             )
 
+    def _context_snapshot_locked(self) -> dict:
+        from ccx.claude.context import current_context, public_context
+        return public_context(
+            current_context(self.record, engine="codex", live=self.record.get("context")),
+            engine="codex", compacting=isinstance(self.record.get("activeCompact"), dict),
+        )
+
+    def _append_context_locked(self, value: dict) -> None:
+        turn_id = ((self.record.get("lifecycle") or {}).get("activeTurnId")
+                   or (self.record.get("lastTurn") or {}).get("turnId"))
+        self.evidence.record(
+            CONTEXT_CHANGED_METHOD,
+            {"context": value, "turnId": turn_id},
+            thread_id=(self.record.get("native") or {}).get("threadId"),
+        )
+        self.record["evidence"] = self.evidence.state()
+        self._save()
+
+    def _publish_context_locked(self, *, force: bool = False) -> None:
+        view = self._context_snapshot_locked()
+        previous = self._context_changes.last
+        fenced = (view["reason"] in {"compacting", "just_compacted"}
+                  and (previous or {}).get("reason") != view["reason"])
+        active = (self.record.get("lifecycle") or {}).get("activeTurnId")
+        result = self._context_changes.observe(
+            view, force=bool(force or fenced or not active),
+        )
+        if result is not None:
+            self._append_context_locked(result)
+
+    def flush_context(self) -> None:
+        """Publish the last native usage sample on the existing janitor tick."""
+        with self.lock:
+            if self.teardown_claimed or self._externally_terminalized:
+                return
+            # The terminal notification itself flushes context synchronously.
+            # Never let the janitor publish an old queued mid-turn sample after
+            # turn/compact settlement; a read-only compact-status must stay pure.
+            if (not (self.record.get("lifecycle") or {}).get("activeTurnId")
+                    or isinstance(self.record.get("activeCompact"), dict)):
+                self._context_changes.pending = None
+                return
+            value = self._context_changes.flush()
+            if value is not None:
+                self._append_context_locked(value)
+
     def _publish_background_locked(self, transition: str, item: dict | None) -> None:
         """Journal one actual native change; the caller holds worker.lock."""
         snapshot = background_summary([
@@ -1570,6 +1620,7 @@ class Worker:
                 self.record["evidence"] = self.evidence.state()
             self.last_activity = time.monotonic()
             self._save()
+            self._publish_context_locked(force=completed_turn)
 
         if completed_turn:
             # The native notification was admitted as this worker's exact
@@ -2275,6 +2326,7 @@ class Worker:
                 # Native submission is impossible until its exact durable
                 # marker and earlier global submitted intent both exist.
                 self._save()
+                self._publish_context_locked(force=True)
             try:
                 self.client.request(
                     "thread/compact/start", {"threadId": thread_id}, timeout=1.5,
@@ -2293,6 +2345,7 @@ class Worker:
                             self.record["lifecycle"]["state"] = "idle"
                             self.record["lifecycle"]["since"] = now_ms()
                             self._save()
+                            self._publish_context_locked(force=True)
                     return acknowledged(
                         started_at, accepted=False, reason=str(error),
                     )

@@ -290,6 +290,7 @@ def _log_janitor_failure(daemon, what: str, error: BaseException) -> None:
 def _janitor_worker(daemon, worker: Worker) -> None:
     if worker.load_lock.locked():
         return
+    worker.flush_context()
     with worker.lock:
         state = worker.record["lifecycle"]["state"]
         timeout = int(
