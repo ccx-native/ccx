@@ -41,6 +41,9 @@ if __name__ == "__main__":
     main()
 ```
 
+For a longer example where Claude implements, Codex reviews and Claude fixes,
+see [`examples/controller_implement_review.py`](../examples/controller_implement_review.py).
+
 The workers keep running after the controller ends. Find their handles in
 `ccx list` to `peek`, `send` or `kill` them; names such as `investigator-auth`
 are labels, not command targets.
