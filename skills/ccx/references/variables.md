@@ -59,4 +59,4 @@ find Apple's older `/usr/bin/python3`, which can't run them.
 Live controller objects require Python to match the controller's version and
 platform; otherwise ccx runs ordinary Python with a warning. Saved JSON has no
 matching-version check, but needs Python capable of running ccx's variable
-support. See [variable troubleshooting](https://github.com/oneferdev/ccx/blob/main/docs/variables/troubleshooting.md).
+support. See [variable troubleshooting](https://github.com/ccx-native/ccx/blob/main/docs/variables/troubleshooting.md).

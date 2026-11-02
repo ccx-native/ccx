@@ -36,9 +36,9 @@ ccx = "ccx.cli.main:main"
 dev = ["pytest>=8", "pytest-xdist>=3.6"]
 
 [project.urls]
-Homepage = "https://github.com/oneferdev/ccx"
-Repository = "https://github.com/oneferdev/ccx"
-Issues = "https://github.com/oneferdev/ccx/issues"
+Homepage = "https://github.com/ccx-native/ccx"
+Repository = "https://github.com/ccx-native/ccx"
+Issues = "https://github.com/ccx-native/ccx/issues"
 
 [tool.hatch.build.targets.sdist]
 # Allowlist: hatchling's default sdist ships every file not ignored by VCS,

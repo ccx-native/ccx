@@ -33,10 +33,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/oneferdev/ccx.git"
+    "url": "git+https://github.com/ccx-native/ccx.git"
   },
   "bugs": {
-    "url": "https://github.com/oneferdev/ccx/issues"
+    "url": "https://github.com/ccx-native/ccx/issues"
   },
-  "homepage": "https://github.com/oneferdev/ccx#readme"
+  "homepage": "https://github.com/ccx-native/ccx#readme"
 }

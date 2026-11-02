@@ -58,7 +58,7 @@ and `npm install -g ccx-native` work too (npm needs Python 3.11+ on your
 `ccx skills install` is optional. It copies the agent skill into the skills
 folder of each engine you have (`~/.claude/skills`, `~/.agents/skills`), so
 Claude Code and Codex know how to use ccx, and keeps it current when you upgrade.
-To use [skills.sh](https://skills.sh) instead: `npx skills add oneferdev/ccx -g`.
+To use [skills.sh](https://skills.sh) instead: `npx skills add ccx-native/ccx -g`.
 
 ## Quick start
 

@@ -10,7 +10,7 @@ It needs only the installed `ccx` command and Python 3.11+. Run it straight from
 GitHub with uv, or download `dashboard.py` and run it with `python3`:
 
 ```bash
-uv run https://raw.githubusercontent.com/oneferdev/ccx/main/examples/dashboard.py
+uv run https://raw.githubusercontent.com/ccx-native/ccx/main/examples/dashboard.py
 python3 dashboard.py                 # Interactive: active scope
 python3 dashboard.py --scope all     # Include stopped/historical workers
 python3 dashboard.py --once          # One text snapshot, no terminal needed

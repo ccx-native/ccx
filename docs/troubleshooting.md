@@ -120,7 +120,7 @@ it. Typical signs:
   python scripts/check_codex_protocol.py --generated /tmp/codex-schema   # from a ccx checkout
   ```
 
-Check the [issues](https://github.com/oneferdev/ccx/issues), or open one with the
+Check the [issues](https://github.com/ccx-native/ccx/issues), or open one with the
 two versions (`claude --version`, `codex --version`, `ccx --version`).
 
 ## Looking deeper

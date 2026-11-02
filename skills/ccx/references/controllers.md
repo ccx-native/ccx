@@ -220,8 +220,8 @@ attempt), `ControllerOperationIndeterminate` (acceptance unknown),
 `CreatePartialFailure` (creation didn't finish; it carries the worker id),
 `ControllerLaunchRequired` (the script wasn't started by `ccx controller run`).
 
-Full reference: [Python API](https://github.com/oneferdev/ccx/blob/main/docs/python/README.md)
-and [controllers guide](https://github.com/oneferdev/ccx/blob/main/docs/controllers.md).
+Full reference: [Python API](https://github.com/ccx-native/ccx/blob/main/docs/python/README.md)
+and [controllers guide](https://github.com/ccx-native/ccx/blob/main/docs/controllers.md).
 
 ## CLI
 
