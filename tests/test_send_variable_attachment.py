@@ -348,6 +348,10 @@ def test_send_restricted_and_live_claude_prebridge_refuse_before_publication(
 def test_controller_live_send_mutates_retained_objects_and_lost_owner_never_replays(
     owned_workers, tmp_path, monkeypatch,
 ):
+    # Live Python execution swaps process-global streams: run it outside
+    # the xdist gateway (see _run_isolated_live_owner_test).
+    if backend_fake._run_isolated_live_owner_test(__file__, "test_controller_live_send_mutates_retained_objects_and_lost_owner_never_replays"):
+        return
     client = WorkerClient()
     directory = _controller_dir(tmp_path)
     calls = []
@@ -470,6 +474,10 @@ def test_controller_durable_send_accepted_stopped_unknown_replay_one_token(
 def test_worker_exec_selected_interpreter_native_escape_and_busy(
     owned_workers, monkeypatch, tmp_path,
 ):
+    # Live Python execution swaps process-global streams: run it outside
+    # the xdist gateway (see _run_isolated_live_owner_test).
+    if backend_fake._run_isolated_live_owner_test(__file__, "test_worker_exec_selected_interpreter_native_escape_and_busy"):
+        return
     native = shutil.which("python3")
     assert native
     observed = []
