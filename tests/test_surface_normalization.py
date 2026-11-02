@@ -104,7 +104,7 @@ def test_codex_busy_refusal_before_submission_says_retry_the_same_id(capsys):
     assert "do not resend it" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("native_state", ["busy", "waiting"])
+@pytest.mark.parametrize("native_state", ["busy", "waiting", "compacting"])
 def test_worker_facade_codex_state_refusal_keeps_native_code(
     tmp_path, monkeypatch, native_state
 ):
@@ -138,8 +138,10 @@ def test_worker_facade_codex_state_refusal_keeps_native_code(
 
     def fake_daemon_rpc(request, *, timeout):
         calls.append(request["op"])
+        compacting = native_state == "compacting"
         return {"transport": "served", "rpcGeneration": CODEXD_RPC_GENERATION,
-                "ok": True, "loaded": True, "state": native_state}
+                "ok": True, "loaded": True, "compacting": compacting,
+                "state": "busy" if compacting else native_state}
 
     monkeypatch.setattr(codex_runtime, "daemon_rpc", fake_daemon_rpc)
     expected = SessionWaiting if native_state == "waiting" else DeliveryRejected
@@ -149,9 +151,14 @@ def test_worker_facade_codex_state_refusal_keeps_native_code(
     error = captured.value
     refusal = error.__cause__ if native_state == "waiting" else error
     assert isinstance(refusal, DeliveryRejected)
-    assert refusal.state == native_state
-    assert refusal.refusal == ("worker-state" if native_state == "waiting" else "busy")
-    assert refusal.native_refusal == "worker-state"
+    if native_state == "compacting":
+        # Same code as Claude, so callers can wait for the compaction.
+        assert refusal.state == "busy"
+        assert refusal.refusal == refusal.native_refusal == "compaction-busy"
+    else:
+        assert refusal.state == native_state
+        assert refusal.refusal == ("worker-state" if native_state == "waiting" else "busy")
+        assert refusal.native_refusal == "worker-state"
     assert refusal.delivery_id == "facade-state-refusal"
     if native_state == "waiting":
         assert error.waiting_for is None and error.pending_input is None

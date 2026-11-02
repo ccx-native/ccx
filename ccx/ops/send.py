@@ -699,7 +699,8 @@ def ensure_ready(
         # a definite state refusal (legacy Codex send shape), not unavailable.
         raise DeliveryRejected(f"worker is {state}", short=worker_id[:8],
                                reason=f"worker is {state}", state=state,
-                               refusal="worker-state")
+                               refusal=("compaction-busy" if result.get("compacting")
+                                        else "worker-state"))
     if (result.get("transport") != "served"
             or result.get("ok") is not True
             or result.get("loaded") is not True

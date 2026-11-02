@@ -2378,6 +2378,7 @@ class Worker:
                 "cwd": self.record.get("cwd"),
                 "state": lifecycle.get("state"),
                 "activeTurnId": lifecycle.get("activeTurnId"),
+                "compacting": bool(self.record.get("activeCompact")),
                 "pendingApprovals": list(self.record.get("pendingApprovals") or []),
                 "lastReport": self.record.get("lastReport"),
                 "lastTurn": self.record.get("lastTurn"),

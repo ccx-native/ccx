@@ -1362,7 +1362,7 @@ def _original_full_uuid_native(daemon, message: dict[str, Any]) -> dict[str, Any
                         "busy", f"original worker cannot accept {mode} in state=busy",
                     )
                 return refused(
-                    "worker-state",
+                    "compaction-busy" if busy_compact else "worker-state",
                     ("compaction owns the input surface" if busy_compact else
                      f"original worker cannot accept {mode} in state={state}"),
                 )
