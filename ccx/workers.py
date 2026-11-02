@@ -1274,11 +1274,15 @@ class WorkerClient:
         if owner.engine == "claude":
             waiting = record.get("waitingFor")
             if (not isinstance(waiting, dict)
-                    or pending_input_kind(waiting) != "permission"
-                    or not isinstance(waiting.get("id"), str)
-                    or not waiting["id"]):
+                    or pending_input_kind(waiting) != "permission"):
                 raise SessionUnavailable(
-                    "no original Claude permission gate is currently brokered",
+                    "no Claude permission request is pending", short=owner.short,
+                )
+            if not isinstance(waiting.get("id"), str) or not waiting["id"]:
+                # Claude Code's own safety checks prompt only in its terminal.
+                raise SessionUnavailable(
+                    "this prompt is a Claude Code safety check that can only be "
+                    f"answered in its terminal: ccx attach {owner.worker}",
                     short=owner.short,
                 )
             actual_id = waiting["id"]

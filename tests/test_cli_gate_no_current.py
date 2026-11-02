@@ -86,3 +86,15 @@ def test_actual_brokered_gate_with_unavailable_claude_host_still_exits_3(
     with pytest.raises(SessionUnavailable) as error:
         CcxClient().approve(A, request_id="real-gate")
     assert error.value.exit_code == 3
+
+
+def test_worker_client_approve_points_terminal_only_prompt_to_attach(idle_fakes):
+    # Claude Code's own safety checks prompt in its terminal, with no request id.
+    from ccx.workers import WorkerClient
+    store = require_ccx_active(constants.CCX_ROOT)
+    store.mutate_record(f"claude:{A}", patches={"waitingFor": {
+        "type": "permission", "id": None,
+        "message": "Claude needs your permission"}})
+    with pytest.raises(SessionUnavailable) as error:
+        WorkerClient().approve(f"claude:{A}")
+    assert f"ccx attach claude:{A}" in str(error.value)

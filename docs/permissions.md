@@ -90,7 +90,8 @@ and MCP forms are answered with `WorkerClient.answer()` and
   are declined.
 - **Some Claude prompts can only be answered in the terminal.** Claude Code's own
   safety checks (for example a risky `rm`) ask in its terminal without a request
-  id. `ccx peek` shows them; answer with `ccx attach`.
+  id. `ccx peek` shows them; answer with `ccx attach`. Claude denies them by
+  itself after a couple of minutes, and the turn continues without the command.
 - **Codex permissions can't be changed after creation**, and a fork keeps its
   source's settings. Create a new worker instead.
 - **One decision per request.** If several are pending, pass `--request-id`
