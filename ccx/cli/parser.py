@@ -923,7 +923,7 @@ def _add_inventory_parsers(sub) -> None:
         ),
     )
     pg.add_argument("target", help=_WORKER_QUERY_HELP)
-    pg.add_argument("--tail", type=int, default=None, help="Only the last N turns.")
+    pg.add_argument("--tail", type=int, default=None, help="Only the last N turns. For Claude, only those turns are read, so their numbers start at 1.")
     pg.add_argument("--format", choices=("conversation", "rendered"), default="conversation",
                     help="conversation (default) or rendered (Claude only: per-turn "
                          "transcript with tool calls paired to their results).")

@@ -889,8 +889,12 @@ def _normalize_claude_events(
 
 def build_claude(rec: dict, *, state: str | None, worker: str,
                  max_tool_result_bytes: int | None = None,
-                 before_offset: int | None = None) -> dict:
-    """Normalize a managed Claude worker's raw JSONL transcript."""
+                 before_offset: int | None = None,
+                 after_offset: int = 0) -> dict:
+    """Normalize a managed Claude worker's raw JSONL transcript.
+
+    ``after_offset`` starts at a turn boundary to read only the newest turns.
+    """
     requested = _requested_label(max_tool_result_bytes)
     short = rec.get("short")
     src = rec.get("transcript")
@@ -903,7 +907,8 @@ def build_claude(rec: dict, *, state: str | None, worker: str,
     counters = _Counters()
     raw_stats: dict = {"malformedLines": 0}
     try:
-        events = list(_iter_transcript(src, raw_stats, before_offset=before_offset))
+        events = list(_iter_transcript(src, raw_stats, after_offset=after_offset,
+                                       before_offset=before_offset))
     except OSError as error:
         raise SessionNotFound(
             f"transcript not readable for {short}: {error.__class__.__name__}",

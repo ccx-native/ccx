@@ -699,6 +699,17 @@ def _reverse_boundary_events(path: str | PinnedNativeSource, *, before_offset: i
             yield evt
 
 
+def claude_tail_offset(path: str | PinnedNativeSource, *, before_offset: int,
+                       turns: int) -> int:
+    """Where the newest ``turns`` user turns start, reading backwards; 0 if fewer."""
+    seen = 0
+    for evt in _reverse_boundary_events(path, before_offset=before_offset):
+        seen += 1
+        if seen >= turns:
+            return evt["_ccx_start_offset"]
+    return 0
+
+
 def _normalize_claude_window(
     path: str,
     *,

@@ -51,6 +51,7 @@ import subprocess
 import unicodedata
 import sys
 import threading
+from datetime import datetime
 import time
 from collections import deque
 
@@ -738,9 +739,20 @@ def conversation_entries(doc: dict | None) -> list[tuple[str, str, int]]:
         return []
     entries = []
     for turn in doc.get("turns") or []:
-        tid = str(turn.get("turnId") or turn.get("sequence"))
-        seq = turn.get("sequence") or "?"
-        entries.append((f"{tid}:sep", f"── turn {seq} · {turn.get('status') or '?'} ──", C_DIM))
+        # `ccx logs --tail` numbers turns from the first one read, so key a
+        # turn by its first message id to keep the scroll position stable.
+        first = next((item.get("id") for side in ("input", "output")
+                      for item in turn.get(side) or []
+                      if isinstance(item, dict) and item.get("id")), None)
+        tid = str(turn.get("turnId") or first or turn.get("sequence"))
+        try:
+            started = datetime.fromisoformat(
+                str(turn.get("startedAt")).replace("Z", "+00:00")
+            ).astimezone().strftime("%H:%M")
+        except ValueError:
+            started = ""
+        heading = " · ".join(x for x in (started, turn.get("status") or "?") if x)
+        entries.append((f"{tid}:sep", f"── {heading} ──", C_DIM))
         for side in ("input", "output"):
             for i, item in enumerate(turn.get(side) or []):
                 if not isinstance(item, dict):

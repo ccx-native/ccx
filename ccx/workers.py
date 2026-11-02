@@ -1788,7 +1788,8 @@ class WorkerClient:
     @contextmanager
     def _open_full_conversation(self, worker, *, max_tool_result_bytes,
                                 timeout, include_native=False,
-                                codex_recent_turns: int | None = None):
+                                codex_recent_turns: int | None = None,
+                                claude_recent_turns: int | None = None):
         """Build once from the original owner, retaining its native source until exit."""
         from ccx.codex import runtime as codex_runtime
         from ccx.codex import telemetry as codex_telemetry
@@ -1834,12 +1835,18 @@ class WorkerClient:
                     view = {**rec, "short": owner.short,
                             "sessionId": native.get("sessionId"),
                             "transcript": pinned}
+                    after_offset = 0
+                    if claude_recent_turns:
+                        from ccx.ops.conversation_paging import claude_tail_offset
+                        after_offset = claude_tail_offset(
+                            pinned, before_offset=end_offset,
+                            turns=claude_recent_turns)
                     document = _conv.build_claude(
                         view, state=normalize_native_state(
                             (rec.get("lifecycle") or {}).get("state")),
                         worker=owner.worker,
                         max_tool_result_bytes=max_tool_result_bytes,
-                        before_offset=end_offset,
+                        before_offset=end_offset, after_offset=after_offset,
                     )
                     # Public reference names the verified original pathname;
                     # export uses the still-open native descriptor, not that path.
@@ -1923,7 +1930,8 @@ class WorkerClient:
 
     def conversation(self, worker, *, max_tool_result_bytes: int | None = None,
                      timeout: float | None = None,
-                     _recent_codex_turns: int | None = None) -> dict:
+                     _recent_codex_turns: int | None = None,
+                     _recent_claude_turns: int | None = None) -> dict:
         """Read a normalized full history from this original full-UUID owner.
 
         Claude reads a pinned native JSONL complete-line snapshot; Codex reads
@@ -1933,6 +1941,7 @@ class WorkerClient:
         with self._open_full_conversation(
             worker, max_tool_result_bytes=max_tool_result_bytes,
             timeout=timeout, codex_recent_turns=_recent_codex_turns,
+            claude_recent_turns=_recent_claude_turns,
         ) as (_owner, document, _native, _files):
             return document
 
