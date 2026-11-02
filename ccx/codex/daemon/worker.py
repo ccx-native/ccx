@@ -623,6 +623,9 @@ class Worker:
             )
         resume_params = dict(params)
         resume_params["threadId"] = thread_id
+        # Only the thread's id, source and status are read from the reply;
+        # rebuilding a long thread's full history can take Codex minutes.
+        resume_params["excludeTurns"] = True
         # Kill can win while this load waits for a prior unsubscribe. The
         # already-published killed marker is the existing no-late-load fence.
         self._abort_if_killed()

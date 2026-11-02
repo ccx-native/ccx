@@ -579,7 +579,7 @@ def test_answered_unusable_resume_crashes_and_explicit_retry_succeeds(
         assert _trace_count(trace, 'RPC thread/resume') == 2
 
 
-def test_lost_resume_reply_remains_resuming_without_replay(
+def test_lost_resume_reply_stays_resuming_until_a_retry_succeeds(
     short_root, tmp_path, monkeypatch,
 ):
     reply_mode = tmp_path / 'R1-lost-mode'
@@ -598,10 +598,14 @@ def test_lost_resume_reply_remains_resuming_without_replay(
             client.resume(B, timeout=2)
         _until(trace, 'RPC thread/resume')
         assert store.record(B)['lifecycle']['state'] == 'resuming'
-        with pytest.raises(SessionUnavailable, match='thread/resume is unresolved; do not replay'):
-            client.resume(B, timeout=5)
-        assert store.record(B)['lifecycle']['state'] == 'resuming'
-        assert _trace_count(trace, 'RPC thread/resume') == 1
+        # Codex finished loading meanwhile: the next resume simply retries.
+        reply_mode.write_text('idle')
+        retry = client.resume(B, timeout=12)
+        assert retry.resumed and retry.state == 'idle'
+        assert _trace_count(trace, 'RPC thread/resume') == 2
+        resumes = [line for line in trace.read_text().split('\\n')
+                   if 'RPC thread/resume' in line]
+        assert resumes and all("'excludeTurns': True" in line for line in resumes), resumes
 
 
 def test_promptless_current_epoch_no_native_resume_and_zero_rollout_after_park_refuses(

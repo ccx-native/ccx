@@ -147,10 +147,9 @@ def _load_original_native_worker(
                         raise RuntimeError("original Codex worker is not idle")
                     return {"ok": True, "changed": False, "loaded": True,
                             **worker.public_status()}
-                # An older indeterminate resume may have subscribed, even
-                # without a reply; never redispatch it just to try again.
-                if lifecycle.get("state") == "resuming":
-                    raise RuntimeError("original native thread/resume is unresolved; do not replay")
+                # An earlier resume may have timed out while Codex kept
+                # loading the thread. Resuming again is safe: Codex attaches
+                # to a thread it already has loaded.
                 if not isinstance(original_native, str) or not original_native:
                     raise NativeActionDenied("original native Codex threadId missing")
                 if not os.path.isdir(worker.record["cwd"]):
