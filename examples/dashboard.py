@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
 """dashboard — a live, interactive terminal dashboard for your `ccx` sessions.
 
 This is an example, not part of the `ccx` package. It composes

@@ -1,18 +1,13 @@
 # Examples
 
-The source checkout includes a terminal dashboard for ccx workers. It uses Python's
-standard library and the installed `ccx` command.
+- **[Dashboard](dashboard.md)**: a terminal dashboard for watching and joining
+  workers. It's a single file that uses only Python's standard library and the
+  installed `ccx` command.
 
-Clone the repository and install it in editable mode for development:
+Run the dashboard without cloning the repository:
 
 ```bash
-git clone https://github.com/oneferdev/ccx
-cd ccx
-python3 -m pip install -e .
-python3 examples/dashboard.py
+uv run https://raw.githubusercontent.com/oneferdev/ccx/main/examples/dashboard.py
 ```
 
-The dashboard needs Python 3.11+ and can also print snapshots without an
-interactive terminal.
-
-See **[Dashboard](dashboard.md)** for controls, headless commands, JSON output, and limitations.
+Or download `dashboard.py` and run `python3 dashboard.py` (Python 3.11+).

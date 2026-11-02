@@ -2,17 +2,19 @@
 
 `examples/dashboard.py` is a terminal dashboard for local Claude Code and Codex
 workers. It uses the `ccx` CLI to show workers, context usage, pending input,
-conversations, plan usage and live events. Run it from a source checkout.
+conversations, plan usage and live events.
 
 ## Run
 
-From a clone with the `ccx` command installed (see [examples README](README.md)):
+It needs only the installed `ccx` command and Python 3.11+. Run it straight from
+GitHub with uv, or download `dashboard.py` and run it with `python3`:
 
 ```bash
-python3 examples/dashboard.py                 # Interactive: active scope
-python3 examples/dashboard.py --scope all     # Include stopped/historical workers
-python3 examples/dashboard.py --once          # One text snapshot, no terminal needed
-python3 examples/dashboard.py --once --json   # One JSON object
+uv run https://raw.githubusercontent.com/oneferdev/ccx/main/examples/dashboard.py
+python3 dashboard.py                 # Interactive: active scope
+python3 dashboard.py --scope all     # Include stopped/historical workers
+python3 dashboard.py --once          # One text snapshot, no terminal needed
+python3 dashboard.py --once --json   # One JSON object
 ```
 
 `--snapshot` is an alias for `--once`. The available scopes are `active` (default,
