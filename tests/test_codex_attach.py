@@ -597,3 +597,27 @@ def test_idle_unload_protects_more_than_100_native_commands_but_explicit_kill_wi
     assert worker.teardown_claimed is True
     assert worker.record["lifecycle"]["state"] == "dead"
     assert B not in daemon.workers
+
+
+def test_janitor_leaves_just_adopted_stopped_worker_for_its_resume(monkeypatch):
+    # Resume adopts a stopped worker, then takes load_lock; the janitor
+    # must not unload it in between ("unloaded during resume").
+    daemon, worker = _attach_daemon("idle-killed")
+    worker.record["createArgs"] = {}
+    worker.loaded = False
+    worker.last_activity = time.monotonic()
+    worker.load_lock = threading.Lock()
+    unloads = []
+    monkeypatch.setattr(daemon, "_unload",
+                        lambda target, **kw: unloads.append(kw["terminal_state"]))
+    daemon._janitor_worker(worker)
+    assert unloads == []
+    worker.last_activity -= 10       # abandoned adoption: cleaned up
+    daemon._janitor_worker(worker)
+    assert unloads == ["idle-killed"]
+    unloads.clear()
+    worker.loaded = True             # crashed after running: unloaded at once
+    worker.last_activity = time.monotonic()
+    worker.record["lifecycle"]["state"] = "crashed"
+    daemon._janitor_worker(worker)
+    assert unloads == ["crashed"]

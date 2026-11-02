@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 
 
 _RELEASE_FENCE_WAIT_S = 5.0
+# A stopped worker adopted moments ago (never loaded) is about to be resumed,
+# killed or sent to; its caller takes load_lock right after adoption. Leave it
+# alone briefly so the janitor's cleanup doesn't unload it first.
+_STOPPED_UNLOAD_GRACE_S = 5.0
 
 
 def _abandon_killed_load(daemon, worker: Worker) -> None:
@@ -333,7 +337,9 @@ def _janitor_worker(daemon, worker: Worker) -> None:
                 return
         finally:
             worker.operation_lock.release()
-    if state in {"idle-killed", "crashed", "dead"}:
+    if (state in {"idle-killed", "crashed", "dead"}
+            and (worker.loaded
+                 or time.monotonic() - worker.last_activity >= _STOPPED_UNLOAD_GRACE_S)):
         daemon._unload(worker, terminal_state=state)
 
 
