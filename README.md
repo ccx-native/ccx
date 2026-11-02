@@ -46,28 +46,33 @@ Claude Code 2.1.316 and Codex 0.166, on WSL2, macOS 12 (Intel) and
 macOS 27 (Apple silicon).
 
 ```bash
-uv tool install ccx-native     # or: pipx install ccx-native / npm install -g ccx-native
-ccx skills install             # optional: teach Claude Code and Codex to use ccx
+uv tool install ccx-native
+ccx skills install
 ```
 
-The package is `ccx-native`; the command is `ccx`. The first command that
-needs the store creates it in `~/.ccx`. `ccx skills install` copies the agent
-skill into the skills folder of each engine you have (`~/.claude/skills`,
-`~/.agents/skills`) and keeps it current when you upgrade. If `ccx` isn't found
-afterwards, see [Installing](docs/troubleshooting.md#installing). To use [skills.sh](https://skills.sh) instead:
-`npx skills add oneferdev/ccx -g`.
+The package is `ccx-native`; the command is `ccx`. `pipx install ccx-native`
+and `npm install -g ccx-native` work too (npm needs Python 3.11+ on your
+`PATH`). The first command that needs the store creates it in `~/.ccx`. If
+`ccx` isn't found afterwards, see [Installing](docs/troubleshooting.md#installing).
+
+`ccx skills install` is optional. It copies the agent skill into the skills
+folder of each engine you have (`~/.claude/skills`, `~/.agents/skills`), so
+Claude Code and Codex know how to use ccx, and keeps it current when you upgrade.
+To use [skills.sh](https://skills.sh) instead: `npx skills add oneferdev/ccx -g`.
 
 ## Quick start
 
 ```bash
 W=$(ccx new --engine claude --cwd ~/myproject "List the .py files here")
-ccx wait "$W"                           # until the first turn finishes
-ccx report "$W"                         # the reply
-ccx send "$W" "Now count their lines"   # a follow-up; waits and prints the reply
-ccx attach "$W"                         # open it in your terminal; Ctrl-Z to detach
+ccx wait "$W"
+ccx report "$W"
+ccx send "$W" "Now count their lines"
+ccx attach "$W"
 ```
 
-`ccx new` prints the worker's handle, `claude:<uuid>`. Use `--engine codex` for a
+`ccx new` prints the worker's handle, `claude:<uuid>`. `wait` returns when the
+first turn finishes, `report` prints the reply, and `send` adds a follow-up and
+prints its reply. `attach` opens the worker in your terminal; Ctrl-Z detaches. Use `--engine codex` for a
 Codex worker; every command works the same. Add `--model haiku` (Claude) or
 `--model gpt-6-luna --effort low` (Codex) to keep experiments cheap.
 

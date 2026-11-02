@@ -9,8 +9,10 @@ You need Python 3.11+, Linux, macOS or WSL2, and Claude Code or Codex (or both)
 installed and logged in. Check that `claude` or `codex` starts on its own first.
 
 ```bash
-uv tool install ccx-native     # or: pipx install ccx-native
+uv tool install ccx-native
 ```
+
+`pipx install ccx-native` and `npm install -g ccx-native` work too.
 
 The first `ccx` command that needs the store creates it in `~/.ccx` (it prints
 `ccx: created store at ...`). To keep test workers in a separate store, set
@@ -22,21 +24,25 @@ still use your provider accounts and can access your files.
 ```bash
 W=$(ccx new --engine claude --model haiku --cwd ~/myproject -n first \
       "Read the README and summarize it in three bullets")
-ccx wait "$W"          # until the turn finishes
-ccx report "$W"        # the reply
+ccx wait "$W"
+ccx report "$W"
 ```
 
 `ccx new` prints the handle (`claude:<uuid>`) and returns while the first turn
-runs. Keep the handle: worker commands take it, or a unique prefix of at least
+runs. `ccx wait` returns when the turn finishes, and `ccx report` prints the
+reply. Keep the handle: worker commands take it, or a unique prefix of at least
 8 lowercase hex characters.
 
 Follow up, and look around:
 
 ```bash
-ccx send "$W" "Which section is the weakest?"   # waits and prints the reply
-ccx peek "$W"          # last messages, recent tool calls, anything pending
-ccx list               # all workers with their states
+ccx send "$W" "Which section is the weakest?"
+ccx peek "$W"
+ccx list
 ```
+
+`send` waits and prints the reply. `peek` shows the last messages, recent tool
+calls and anything pending; `list` shows all workers with their states.
 
 Open the same live session in your terminal with `ccx attach "$W"`. Type as
 usual; Ctrl-Z detaches and leaves the worker running. ccx commands keep working
@@ -66,10 +72,13 @@ behavior:
 ```bash
 R=$(ccx new --engine claude --model haiku --permissions restricted --cwd ~/myproject \
       "Run the test suite")
-ccx wait "$R"          # exits 4 when the worker is waiting for input
-ccx peek "$R"          # shows the pending request
-ccx approve "$R"       # or: ccx reject "$R"
+ccx wait "$R"
+ccx peek "$R"
+ccx approve "$R"
 ```
+
+`ccx wait` exits with code 4 when the worker is waiting for input, `peek` shows
+the pending request, and `approve` (or `reject`) answers it.
 
 Questions a Claude worker asks (its multiple-choice question tool) are answered
 with `ccx answer`. [Permissions](permissions.md) has the details.
@@ -89,11 +98,12 @@ how to wait correctly: a Claude Code session uses `ccx wait`; a Codex session us
 ## Cleaning up
 
 ```bash
-ccx kill "$W"          # stop one worker; its history is kept
-ccx shutdown           # stop every worker and ccx's background processes
+ccx kill "$W"
+ccx shutdown
 ```
 
-Worker histories are kept: a later `ccx send` revives a worker.
+`kill` stops one worker; `shutdown` stops every worker and ccx's background
+processes. Worker histories are kept: a later `ccx send` revives a worker.
 [What ccx changes on your machine](machine-changes.md) explains how to remove
 ccx completely.
 
