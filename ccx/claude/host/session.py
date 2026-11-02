@@ -5134,6 +5134,15 @@ def _run_host(args):
         # (confirmed kill, `ccx shutdown`) and a worker that simply exits never
         # went through set_state, and an explicit kill overrides an earlier
         # idle-kill; journal the final transition before the sidecar closes.
+        # Claude's background commands, Monitors and subagents end with it, so
+        # a stopped worker must not keep showing them as running.
+        if child_exited[0] and bg["items"]:
+            try:
+                publish_bg([], [("stopped", {**item, "status": "stopped"})
+                                for item in bg["items"]])
+                bg["items"] = []
+            except Exception:
+                pass
         if cur != state["current"]:
             try:
                 broadcast({"type": "state", "from": state["current"], "to": cur,
