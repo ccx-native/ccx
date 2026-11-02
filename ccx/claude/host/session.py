@@ -195,6 +195,12 @@ def worker_env(
         if key.startswith("CCX_SELF_") or key in INHERITED_CLAUDE_IDENTITY_VARS:
             env.pop(key, None)
     env["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
+    # Claude runs in ccx's own terminal, which `ccx attach` shows. A worker
+    # started from an agent's shell inherits TERM=dumb (often with NO_COLOR)
+    # and would otherwise draw without colors.
+    if env.get("TERM", "dumb") == "dumb":
+        env["TERM"] = "xterm-256color"
+        env.pop("NO_COLOR", None)
     if worker_id is not None:
         if engine != "claude":
             raise SessionUnavailable("Claude host requires Claude worker engine")
