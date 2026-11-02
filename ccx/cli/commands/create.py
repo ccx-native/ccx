@@ -606,8 +606,13 @@ def _prepare_full_uuid_new(args, *, engine: str) -> None:
             output["turn_status"] = getattr(cause, "turn_status", None)
             output["turn_error"] = getattr(cause, "turn_error", None)
             output["waiting_for"] = getattr(cause, "waiting_for", None)
+        if error.info.get("signed_out") is True:
+            output.update(code="signed_out", message=str(error))
         if args.json:
             print(json.dumps(output, sort_keys=True, ensure_ascii=False))
+        elif output["code"] == "signed_out":
+            print(f"ccx new: {error} (worker {error.worker} did not start)",
+                  file=sys.stderr)
         elif output["code"] in {"local_refused", "native_rejected"}:
             print(f"ccx {engine} new: {output['message']} "
                   f"(worker {error.worker}; no native replay)", file=sys.stderr)

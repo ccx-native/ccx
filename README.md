@@ -51,9 +51,10 @@ ccx skills install             # optional: teach Claude Code and Codex to use cc
 ```
 
 The package is `ccx-native`; the command is `ccx`. The first command that
-needs the store creates it in `~/.ccx`. `ccx skills install` copies
-the agent skill into `~/.claude/skills` and `~/.agents/skills` and keeps it
-current when you upgrade. To use [skills.sh](https://skills.sh) instead:
+needs the store creates it in `~/.ccx`. `ccx skills install` copies the agent
+skill into the skills folder of each engine you have (`~/.claude/skills`,
+`~/.agents/skills`) and keeps it current when you upgrade. If `ccx` isn't found
+afterwards, see [Installing](docs/troubleshooting.md#installing). To use [skills.sh](https://skills.sh) instead:
 `npx skills add oneferdev/ccx -g`.
 
 ## Quick start

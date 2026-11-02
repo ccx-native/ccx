@@ -2,6 +2,25 @@
 
 Start with the exit code and `ccx peek`.
 
+## Installing
+
+- **`ccx: command not found` after installing:** the install folder, usually
+  `~/.local/bin`, isn't on your `PATH`. Run `uv tool update-shell` or
+  `pipx ensurepath`, then open a new terminal.
+- **npm says `Python 3.11+ is required`:** the npm package runs on your own
+  Python, and it found only an older one (macOS ships Python 3.9 as `python3`).
+  Install a newer Python, or point to one with `PYTHON=/path/to/python3.12`.
+  `uv tool install ccx-native` avoids this, since uv downloads a Python if needed.
+- **The wrong `claude` or `codex` runs:** ccx uses `~/.local/bin/claude` if it
+  exists, otherwise the `claude` on your `PATH`. For Codex it's the reverse:
+  `PATH` first, then `~/.local/bin/codex`. Set `CCX_CLAUDE_BIN` or
+  `CCX_CODEX_BIN` to choose a specific one.
+- **`ccx new` says Claude Code is not signed in:** run `claude` once and sign
+  in. If you are signed in, see
+  [Claude workers say "Not logged in"](#claude-workers-say-not-logged-in).
+  Codex workers that aren't signed in fail their first turn with
+  `401 Unauthorized`; run `codex login`.
+
 ## What the exit code means
 
 Every command uses the same codes, on both engines. Python errors carry the same

@@ -788,6 +788,16 @@ def create(*, prompt: str | None = None,
                         }
             except Exception:
                 pass  # Optional terminal proof never replaces the cause.
+        if engine == "claude" and deadline is None and not info.get("integrity_error"):
+            # A signed-out Claude sits on its login screen until activation
+            # times out. Name the real cause; only checked after a failure,
+            # and never past a caller's deadline.
+            try:
+                from ccx.system.engine_binary import account_signed_out, resolve_engine_binary
+                if account_signed_out("claude", resolve_engine_binary("claude")):
+                    info["signed_out"] = True
+            except Exception:
+                pass
         try:
             # Even after a stale/failed bind, the original immutable claim
             # can sometimes be read safely. An unavailable or suspect
@@ -799,6 +809,8 @@ def create(*, prompt: str | None = None,
         except Exception:
             pass
         partial = CreatePartialFailure(
+            "Claude Code is not signed in: run `claude` once to sign in, then try again"
+            if info.get("signed_out") else
             "full worker UUID and original first record are durable, but creation "
             "did not complete cleanly; retain worker_id, do not remint",
             info=info, phase="native-activation",
