@@ -42,6 +42,7 @@ packages. If `ccx` isn't on your PATH, point at it with `--ccx-bin` or `$CCX_BIN
 from __future__ import annotations
 
 import argparse
+import base64
 import curses
 import json
 import os
@@ -175,7 +176,7 @@ def fmt_tokens(n: int | None) -> str:
 
 
 STATUS_BATCH_LIMIT = 40
-LOG_TAIL_TURNS = 60
+LOG_TAIL_TURNS = 30
 
 
 def context_tokens(row: dict | None) -> int | None:
@@ -191,6 +192,23 @@ def can_send(row: dict | None) -> bool:
 
 def can_attach(row: dict | None) -> bool:
     return bool(row and session_identity(row) and not row.get("terminal_only"))
+
+
+def copy_to_clipboard(text: str) -> str:
+    """Copy with a local clipboard tool, else ask the terminal (OSC 52)."""
+    for argv in (["pbcopy"], ["clip.exe"], ["wl-copy"],
+                 ["xclip", "-selection", "clipboard"]):
+        if shutil.which(argv[0]):
+            try:
+                # No pipes kept open: wl-copy and xclip stay running.
+                subprocess.run(argv, input=text.encode(), timeout=3, check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return argv[0]
+            except (OSError, subprocess.SubprocessError):
+                continue
+    sys.stdout.write("\x1b]52;c;" + base64.b64encode(text.encode()).decode() + "\x07")
+    sys.stdout.flush()
+    return "terminal"
 
 
 def footer_hints(row: dict | None, status: dict | None) -> str:
@@ -608,7 +626,7 @@ class ConversationWorker(threading.Thread):
             runner = self._runner if self._runner is not None else run_ccx_json
             doc, error = runner(self.ccx_bin,
                                 ["logs", worker, "--tail", str(LOG_TAIL_TURNS)],
-                                timeout=12.0)
+                                timeout=25.0)
             if error or not isinstance(doc, dict) or doc.get("schemaVersion") != 5:
                 doc, error = None, error or "invalid schema-5 conversation"
             with self._lock:
@@ -1363,6 +1381,7 @@ class App:
             "  d            toggle detail         e          toggle event feed",
             "  o            cycle sort            /          search worker",
             "  r            refresh now           ?          this help",
+            "  c            copy the full worker id",
             "",
             "  s            send (only idle/stopped, not terminal-only)",
             "  A / X        approve / reject a pending permission",
@@ -1644,6 +1663,11 @@ class App:
         elif ch == 27:
             if self.search:
                 self.search = ""
+        elif ch == ord("c"):
+            sel = self.selected_row()
+            if sel and sel.get("worker"):
+                copy_to_clipboard(sel["worker"])
+                self.store.set_status(f"copied {sel['worker']}")
         elif ch == ord("d"):
             self.show_detail = not self.show_detail
         elif ch == ord("e"):

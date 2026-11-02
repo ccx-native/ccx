@@ -301,11 +301,13 @@ def cmd_logs(args):
         if limit is not None and limit < 0:
             sys.stderr.write("[ccx] --max-tool-result-bytes must be zero or greater\n")
             raise SystemExit(EXIT_ERROR)
-        # Claude reads only the newest turns' part of the transcript, which
-        # can be hundreds of MB; Codex reads its thread and slices.
+        # Read only the newest turns: a Claude transcript can be hundreds of
+        # MB, and Codex builds every turn it returns.
+        tail = args.tail if args.tail and args.tail > 0 else None
         doc = client.conversation(
             owner.worker, max_tool_result_bytes=limit,
-            _recent_claude_turns=args.tail if args.tail and args.tail > 0 else None)
+            **({"_recent_codex_turns": tail} if owner.engine == "codex"
+               else {"_recent_claude_turns": tail}))
         if args.tail:
             doc["turns"] = doc.get("turns", [])[-args.tail:]
         json.dump(doc, sys.stdout, indent=2, ensure_ascii=False)

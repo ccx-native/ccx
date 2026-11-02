@@ -32,7 +32,7 @@ counters display as unknown.
 
 The detail pane shows the selected worker's state, turn, context usage, and pending input, above
 a scrollable, turn-by-turn conversation: user/assistant text, tool calls/results, and errors
-from the last 60 logged turns. Press `e` to switch the pane to a live `ccx events --follow` feed
+from the last 30 logged turns. Press `e` to switch the pane to a live `ccx events --follow` feed
 for a worker in a live state.
 
 Quota gauges are shown when data is available. Claude usage is read via
@@ -52,6 +52,7 @@ Codex minimum interval.
 | `/`, `Esc` | Search name, short ID, working directory, state or engine / clear search |
 | `d`, `e` | Toggle detail pane / live event feed |
 | `PgUp` / `PgDn`, `Home` / `End`, mouse wheel | Scroll the conversation; jump to beginning / live bottom |
+| `c` | Copy the selected worker's full id |
 | `r`, `?`, `q` | Refresh / show help (any key closes it) / quit |
 | `Enter` | Attach to a non-terminal-only worker's **native UI**, then return on detach/exit |
 | `s` | Send a prompt without waiting (idle/stopped, non-terminal-only worker) |
@@ -95,7 +96,7 @@ ordinary successful snapshot exits 0.
   interaction; `--once` captures one moment, not a stream.
 - Inventory, status, usage and conversation are sampled separately, so values can differ
   momentarily. Status enrichment covers at most 40 workers per batch (visible rows in the TUI or
-  the first listed workers in a snapshot); conversation fetches are bounded to 60 turns and
+  the first listed workers in a snapshot); conversation fetches are bounded to 30 turns and
   happen on focus/record changes, explicit refresh, or retry after an error.
 - Quota gauges need a discoverable provider executable and available usage data. Claude's
   summary is cached. Codex quota retrieval may use a short-lived native app-server; headless

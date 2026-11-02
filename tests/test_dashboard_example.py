@@ -1526,3 +1526,20 @@ def test_background_subprocesses_never_inherit_dashboard_stdin(monkeypatch):
     tailer.set_target("claude:test")
     assert popens[0]["stdin"] == subprocess.DEVNULL
     tailer.stop()
+
+
+def test_copy_worker_id_without_a_clipboard_tool_asks_the_terminal(monkeypatch, capsys):
+    import base64
+    monkeypatch.setattr(dash.shutil, "which", lambda _name: None)
+    assert dash.copy_to_clipboard(f"claude:{A}") == "terminal"
+    encoded = base64.b64encode(f"claude:{A}".encode()).decode()
+    assert capsys.readouterr().out == f"\x1b]52;c;{encoded}\x07"
+
+
+def test_copy_worker_id_uses_a_local_clipboard_tool(monkeypatch):
+    calls = []
+    monkeypatch.setattr(dash.shutil, "which", lambda name: name if name == "wl-copy" else None)
+    monkeypatch.setattr(dash.subprocess, "run",
+                        lambda argv, **kw: calls.append((argv, kw["input"])))
+    assert dash.copy_to_clipboard("codex:x") == "wl-copy"
+    assert calls == [(["wl-copy"], b"codex:x")]
