@@ -3,9 +3,9 @@
 **Control and monitor native Claude Code and Codex sessions from the CLI, Python
 or RPC.**
 
-You, your agents and your scripts share persistent sessions called **workers**.
-They run on your own Claude and ChatGPT subscriptions with your existing setup,
-and you can open any worker live with `ccx attach`.
+You, your agents and your scripts share the same persistent sessions. They run
+on your own Claude and ChatGPT subscriptions with your existing setup, and you
+can open any of them live with `ccx attach`.
 
 ```bash
 npm install -g ccx-native
@@ -15,13 +15,27 @@ ccx skills install
 [▶ Examples](#examples) · [Docs](docs/getting-started.md) · Unofficial: read
 [Risks and system changes](#risks-and-system-changes).
 
+## Usage
+
+Most work needs five commands, the same for Claude Code and Codex:
+
+```bash
+ccx new --engine claude "Implement the plan in PLAN.md"   # prints claude:1a2b3c4d-...
+ccx wait 1a2b3c4d
+ccx report 1a2b3c4d
+ccx send 1a2b3c4d "Also update the changelog"
+ccx attach 1a2b3c4d
+```
+
+Use `--engine codex` for a Codex worker. Replace `1a2b3c4d` with a unique prefix
+of at least 8 characters from the id `ccx new` prints. `ccx help` lists the other
+commands.
+
 ## Features
 
 - **Let Codex run Claude Code.** Codex starts Claude Code workers, is woken when
   they finish, reviews their work and sends fixes back. Claude Code can drive
   Codex workers the same way.
-- **Learn a handful of commands.** The same `new`, `send`, `wait`, `report` and
-  `attach` drive both engines, from an agent, a script or your terminal.
 - **Runs the official Claude Code and Codex.** ccx drives the unmodified
   `claude` program through a terminal (PTY), as you would, and `codex` through
   its app-server. Workers are signed in as you and run on your Claude or ChatGPT
@@ -39,22 +53,6 @@ ccx skills install
 - **Build on it.** A [Python API](docs/python/README.md),
   [controllers](docs/controllers.md) and a local [JSON protocol](docs/rpc/README.md)
   put workers inside your own tools, dashboards and services.
-
-## Usage
-
-Most work needs five commands, the same for Claude Code and Codex workers:
-
-```bash
-ccx new --engine claude "Implement the plan in PLAN.md"   # prints claude:1a2b3c4d-...
-ccx wait 1a2b3c4d
-ccx report 1a2b3c4d
-ccx send 1a2b3c4d "Also update the changelog"
-ccx attach 1a2b3c4d
-```
-
-Use `--engine codex` for a Codex worker. Replace `1a2b3c4d` with a unique prefix
-of at least 8 characters from the id `ccx new` prints. `ccx help` lists the other
-commands.
 
 ## Examples
 
