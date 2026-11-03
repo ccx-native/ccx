@@ -23,10 +23,13 @@ ccx skills install
   Codex workers the same way.
 - **Learn a handful of commands.** The same `new`, `send`, `wait`, `report` and
   `attach` drive both engines, from an agent, a script or your terminal.
-- **Use your subscription and your setup.** Workers are the real `claude` and
-  `codex`, signed in as you, so they run on your Claude or ChatGPT plan with no
-  API keys. Your config, `CLAUDE.md`/`AGENTS.md`, hooks, skills and MCP servers
-  all apply. Start one in any folder, which a subagent can't do.
+- **Runs the official Claude Code and Codex.** ccx drives the unmodified
+  `claude` program through a terminal (PTY), using the same interactive
+  interface you use yourself, and `codex` through its own app-server. Workers
+  are signed in as you and run on your Claude or ChatGPT subscription, with no
+  API keys.
+- **Keep your setup.** Your config, `CLAUDE.md`/`AGENTS.md`, hooks, skills and
+  MCP servers all apply. Start a worker in any folder, which a subagent can't do.
 - **Join any session live.** `ccx attach` opens a worker in the engine's own
   interface while agents keep driving it. `ccx import` brings in a session you
   started yourself.
@@ -145,6 +148,28 @@ def main():
 ```
 
 [Controllers](docs/controllers.md) explains resume and has runnable examples.
+
+## ccx and the Agent SDK
+
+The Claude Agent SDK runs the Claude Code binary from Python or TypeScript.
+The program that starts an SDK session drives it while it is live; other
+processes have no built-in way to inspect or drive that live session. You can
+resume it later with `claude --resume <session-id>`.
+
+ccx provides a shared worker lifecycle for Claude Code and Codex:
+
+- **Shared, live workers.** A worker has a durable id independent of whoever
+  started it. Any agent, shell, Python process or dashboard can inspect,
+  message or steer it, or open it live with `ccx attach`.
+- **Every operation is a command.** Any agent that can run a shell command
+  can drive workers. Python and RPC interfaces are available too.
+- **Built-in lifecycle.** Send a new message or steer a running turn. Questions
+  and approvals go to whoever is driving. Idle workers stop and revive on the
+  next message. A Codex parent is notified when its Claude worker finishes.
+  The same lifecycle covers Claude Code and Codex.
+
+The SDK and ccx serve different layers and can complement each other in the
+same workflow.
 
 ## Install
 
