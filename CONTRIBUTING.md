@@ -16,9 +16,9 @@ ccx is maintained by one person, so the scope for outside pull requests is narro
 - Changes to intended behavior or defaults.
 - New runtime dependencies.
 
-For anything in the second list, open an issue describing the problem instead.
-If it fits the project, the maintainer may build it; pull requests for it are
-closed without review.
+For anything in the second list, please open an issue describing the problem
+first. If it fits the project, the maintainer may build it, so a pull request
+for it may wait a long time or not be merged.
 
 Keep changes focused, dependency-free at runtime, and covered by the quota-free
 test suite.
