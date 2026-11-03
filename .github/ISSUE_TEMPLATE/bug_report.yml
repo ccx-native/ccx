@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in ccx doesn't work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems: please report them privately (see SECURITY.md), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The exact command, what you expected, and what you got (error text or `ccx peek` output).
+    validations:
+      required: true
+  - type: input
+    id: ccx
+    attributes:
+      label: ccx version
+      description: Output of `ccx --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options: [Claude Code, Codex, Both, Not engine-specific]
+    validations:
+      required: true
+  - type: input
+    id: engine-version
+    attributes:
+      label: Claude Code / Codex version
+      description: Output of `claude --version` and/or `codex --version`
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      description: For example Ubuntu 24.04, macOS 15, or WSL2 with Ubuntu 24.04
+    validations:
+      required: true
+  - type: dropdown
+    id: after-shutdown
+    attributes:
+      label: Does it still happen after `ccx shutdown`?
+      options: ["Yes", "No", Didn't try]

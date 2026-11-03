@@ -28,7 +28,3 @@ Every CLI command documents itself: run `ccx help` and `ccx help COMMAND`. Agent
 - [Architecture](docs/architecture.md): what runs, package map, state on disk
 - [Security](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
-
-## Known limitations
-
-See the [README](README.md#known-limitations) for platform and provider limits.

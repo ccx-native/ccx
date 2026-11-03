@@ -41,7 +41,7 @@ dependencies at runtime. `pytest` and `pytest-xdist` are for development.
 - **Stdlib only at runtime.** `pyproject.toml` keeps `dependencies = []`.
   Explain why standard-library alternatives aren't enough and get approval
   before adding a runtime dependency.
-- **Python 3.11+.** CI runs the suite on 3.11 to 3.14.
+- **Python 3.11+.** CI runs the suite on 3.11 to 3.15.
 - **Public surfaces only.** ccx drives Claude Code through its terminal, hooks
   and transcripts, and Codex through `codex app-server`. Prefer what those tools
   document; when ccx has to rely on undocumented behavior, keep it in one place
