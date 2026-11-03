@@ -1,7 +1,7 @@
 {
   "name": "ccx-native",
   "version": "0.1.0",
-  "description": "Run Claude Code and Codex as persistent workers on your own machine.",
+  "description": "Control and monitor native Claude Code and Codex sessions from the CLI, Python or RPC, on your own subscriptions.",
   "author": "Fernando <ccx@delega.ai>",
   "license": "MIT",
   "bin": {

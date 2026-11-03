@@ -4,7 +4,8 @@
 or RPC.**
 
 You, your agents and your scripts share persistent sessions called **workers**.
-They use your existing setup, and you can open any worker live with `ccx attach`.
+They run on your own Claude and ChatGPT subscriptions with your existing setup,
+and you can open any worker live with `ccx attach`.
 
 ```bash
 npm install -g ccx-native
@@ -22,9 +23,10 @@ ccx skills install
   Codex workers the same way.
 - **Learn a handful of commands.** The same `new`, `send`, `wait`, `report` and
   `attach` drive both engines, from an agent, a script or your terminal.
-- **Keep your setup.** Workers are ordinary Claude Code and Codex sessions: your
-  config, `CLAUDE.md`/`AGENTS.md`, hooks, skills and MCP servers all apply. Start
-  one in any folder, which a subagent can't do.
+- **Use your subscription and your setup.** Workers are the real `claude` and
+  `codex`, signed in as you, so they run on your Claude or ChatGPT plan with no
+  API keys. Your config, `CLAUDE.md`/`AGENTS.md`, hooks, skills and MCP servers
+  all apply. Start one in any folder, which a subagent can't do.
 - **Join any session live.** `ccx attach` opens a worker in the engine's own
   interface while agents keep driving it. `ccx import` brings in a session you
   started yourself.
