@@ -3,8 +3,8 @@
 **Control and monitor native Claude Code and Codex sessions from the CLI, Python
 or RPC.**
 
-Your agent, your scripts and you all drive the same persistent sessions, with
-your own setup, and you can open any of them live with `ccx attach`.
+You, your agents and your scripts share persistent sessions called **workers**.
+They use your existing setup, and you can open any worker live with `ccx attach`.
 
 ```bash
 npm install -g ccx-native
@@ -12,10 +12,10 @@ ccx skills install
 ```
 
 [Docs](docs/getting-started.md) · Unofficial: read
-[Before you use it](#before-you-use-it).
-<!-- Add "▶ See it work" here once the video is in. -->
+[Risks and system changes](#risks-and-system-changes).
+<!-- Add "▶ Examples" here once the videos are in. -->
 
-## What you can do with it
+## Features
 
 - **Let Codex run Claude Code.** Codex starts Claude Code workers, is woken when
   they finish, reviews their work and sends fixes back. Claude Code can drive
@@ -28,9 +28,9 @@ ccx skills install
 - **Join any session live.** `ccx attach` opens a worker in the engine's own
   interface while agents keep driving it. `ccx import` brings in a session you
   started yourself.
-- **Find every worker in one place.** Workers keep their history across turns and
-  restarts, stop when idle and come back on the next message. `ccx list` and
-  `ccx peek` show them all, from any agent or terminal.
+- **Find and resume workers.** Workers keep their history across turns and
+  restarts. They stop when idle and resume on the next message. Use `ccx list`
+  to find workers and `ccx peek` to inspect one, from any agent or terminal.
 - **Keep long work going.** Steer a running turn, compact a worker's context
   between steps, and stop work at a usage cap.
 - **Build on it.** A [Python API](docs/python/README.md),
@@ -39,7 +39,7 @@ ccx skills install
 
 Any agent that can run a shell command can drive workers.
 
-## A few commands, both engines
+## Usage
 
 Most work needs five commands, the same for Claude Code and Codex workers:
 
@@ -51,13 +51,13 @@ ccx send 1a2b3c4d "Also update the changelog"
 ccx attach 1a2b3c4d
 ```
 
-Use `--engine codex` for a Codex worker. Workers are targeted by the first 8
-characters of their id or more. The rest (`steer`, `peek`, `compact`, `kill`,
-...) are there when you need them; `ccx help` lists them all.
+Use `--engine codex` for a Codex worker. Replace `1a2b3c4d` with a unique prefix
+of at least 8 characters from the id `ccx new` prints. The rest (`steer`, `peek`,
+`compact`, `kill`, ...) are there when you need them; `ccx help` lists them all.
 
-<!-- ## See it work
+<!-- ## Examples
 
-### Codex runs a Claude and a Codex worker on a real task
+### Codex drives Claude Code and Codex workers
 
 VIDEO
 
@@ -67,6 +67,15 @@ where I attach to the workers and open the dashboard.
 
 Watch for: 0:33 Claude finishes and Codex wakes up · 1:29 Codex tells Claude about
 the Codex worker · 1:45 Codex compacts Claude before the next step.
+
+### Native Claude Code and Codex, one Python API
+
+VIDEO
+
+Right: a web chat built on the ccx Python API. Left: the same Claude Code session,
+open with `ccx attach`. Only the chat is used: Claude runs the slow tests in the
+background and has a Codex worker review its changes. Both are the native
+harnesses, driven through the same API.
 -->
 
 ## Controllers
@@ -153,7 +162,7 @@ folder of each engine you have (`~/.claude/skills`, `~/.agents/skills`), so
 Claude Code and Codex know how to use ccx, and keeps it current when you upgrade.
 To use [skills.sh](https://skills.sh) instead: `npx skills add ccx-native/ccx -g`.
 
-## Before you use it
+## Risks and system changes
 
 > [!IMPORTANT]
 > - **Unofficial.** ccx is an independent project, not affiliated with or
