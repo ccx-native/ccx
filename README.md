@@ -23,25 +23,22 @@ ccx skills install
 - **Learn a handful of commands.** The same `new`, `send`, `wait`, `report` and
   `attach` drive both engines, from an agent, a script or your terminal.
 - **Runs the official Claude Code and Codex.** ccx drives the unmodified
-  `claude` program through a terminal (PTY), using the same interactive
-  interface you use yourself, and `codex` through its own app-server. Workers
-  are signed in as you and run on your Claude or ChatGPT subscription, with no
-  API keys.
+  `claude` program through a terminal (PTY), as you would, and `codex` through
+  its app-server. Workers are signed in as you and run on your Claude or ChatGPT
+  subscription, with no API keys.
 - **Keep your setup.** Your config, `CLAUDE.md`/`AGENTS.md`, hooks, skills and
   MCP servers all apply. Start a worker in any folder, which a subagent can't do.
 - **Join any session live.** `ccx attach` opens a worker in the engine's own
   interface while agents keep driving it. `ccx import` brings in a session you
   started yourself.
 - **Find and resume workers.** Workers keep their history across turns and
-  restarts. They stop when idle and resume on the next message. Use `ccx list`
-  to find workers and `ccx peek` to inspect one, from any agent or terminal.
+  restarts, stop when idle and resume on the next message. `ccx list` finds
+  them; `ccx peek` shows what one is doing.
 - **Keep long work going.** Steer a running turn, compact a worker's context
   between steps, and stop work at a usage cap.
 - **Build on it.** A [Python API](docs/python/README.md),
   [controllers](docs/controllers.md) and a local [JSON protocol](docs/rpc/README.md)
   put workers inside your own tools, dashboards and services.
-
-Any agent that can run a shell command can drive workers.
 
 ## Usage
 
@@ -56,8 +53,8 @@ ccx attach 1a2b3c4d
 ```
 
 Use `--engine codex` for a Codex worker. Replace `1a2b3c4d` with a unique prefix
-of at least 8 characters from the id `ccx new` prints. The rest (`steer`, `peek`,
-`compact`, `kill`, ...) are there when you need them; `ccx help` lists them all.
+of at least 8 characters from the id `ccx new` prints. `ccx help` lists the other
+commands.
 
 ## Examples
 
@@ -78,8 +75,7 @@ https://github.com/user-attachments/assets/849efe10-4f8c-457d-a08e-eea7bf17af17
 
 Right: a web chat built on the ccx Python API. Left: the same Claude Code session,
 open with `ccx attach`. Only the chat is used: Claude runs the slow tests in the
-background and has a Codex worker review its changes. Both are the native
-harnesses, driven through the same API.
+background and has a Codex worker review its changes.
 
 ## Controllers
 
@@ -185,8 +181,7 @@ uv tool install ccx-native
 pipx install ccx-native
 ```
 
-The package is `ccx-native`; the command is `ccx`. There's nothing to set up:
-ccx creates its store in `~/.ccx` the first time it needs it.
+The package is `ccx-native`; the command is `ccx`.
 
 Optionally, teach your agents to use it:
 
@@ -195,8 +190,12 @@ ccx skills install
 ```
 
 This adds the ccx skill to Claude Code and Codex (`~/.claude/skills`,
-`~/.agents/skills`) and keeps it current when you upgrade. With
-[skills.sh](https://skills.sh): `npx skills add ccx-native/ccx -g`.
+`~/.agents/skills`) and keeps it current when you upgrade. Or use
+[skills.sh](https://skills.sh):
+
+```bash
+npx skills add ccx-native/ccx -g
+```
 
 Tested with Claude Code 2.1.316 and Codex 0.166 on WSL2, macOS 12 (Intel) and
 macOS 27 (Apple silicon). If `ccx` isn't found after installing, see
