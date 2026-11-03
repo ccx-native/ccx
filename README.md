@@ -63,7 +63,7 @@ of at least 8 characters from the id `ccx new` prints. The rest (`steer`, `peek`
 
 ### Codex drives Claude Code and Codex workers
 
-https://github.com/user-attachments/assets/849efe10-4f8c-457d-a08e-eea7bf17af17
+https://github.com/user-attachments/assets/661f5247-7614-40e8-866b-b8e9742b158b
 
 I asked Codex for a Claude worker to implement a design, then for a Codex worker
 to check the proxy setup in parallel. Left: the Codex app. Right: its terminal,
@@ -74,7 +74,7 @@ the Codex worker · 1:45 Codex compacts Claude before the next step.
 
 ### Native Claude Code and Codex, one Python API
 
-https://github.com/user-attachments/assets/661f5247-7614-40e8-866b-b8e9742b158b
+https://github.com/user-attachments/assets/849efe10-4f8c-457d-a08e-eea7bf17af17
 
 Right: a web chat built on the ccx Python API. Left: the same Claude Code session,
 open with `ccx attach`. Only the chat is used: Claude runs the slow tests in the
