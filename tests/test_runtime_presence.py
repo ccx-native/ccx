@@ -140,6 +140,12 @@ def test_abrupt_kill_is_gone_within_the_held_read_then_revival_is_live(owned):
     again, elapsed = held(store, f"claude:{A}", wait=1.0, after=cursor)
     assert again["runtime"] == "gone" and again["timed_out"] is True
     assert elapsed >= 1.0
+    # A follow that last saw it live: a death between its held reads is
+    # still a change, returned after the grace, not at the end of the read.
+    followed, elapsed = held(store, f"claude:{A}", wait=10.0, after=cursor,
+                             seen_live=True)
+    assert followed["runtime"] == "gone" and followed["timed_out"] is False
+    assert elapsed < runtime_presence.HOST_MISSING_GRACE_S + 1.0
 
     runtimes.claude(state="busy")
     revived, _ = held(store, f"claude:{A}", wait=0.5, after=cursor)

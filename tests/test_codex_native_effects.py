@@ -1189,7 +1189,7 @@ def test_f1_real_appserver_approval_after_terminal_refused_without_sibling_loss(
                 "op": "status", "short": target,
                 "rpcGeneration": constants.CODEXD_RPC_GENERATION,
             })
-            assert status["ok"] and status["pendingApprovals"] == []
+            assert status["ok"] and status["pendingApprovals"] == [], status
             assert status["persistenceError"]["kind"] == "RecordConflict"
             assert daemon_rpc({"op": "daemon-status"})["pid"] == original_pid
             sibling_result = cli(

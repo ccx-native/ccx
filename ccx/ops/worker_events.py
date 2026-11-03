@@ -491,7 +491,7 @@ def _recorded_state(store: GenerationStore, target: str) -> dict:
 def wait_full_uuid_event_page(
     store: GenerationStore, target: str, *, after: str | None = None,
     tail: int | None = None, limit: int = 200, kinds: list[str] | None = None,
-    wait: float = 0.0, native: bool = False,
+    wait: float = 0.0, native: bool = False, seen_live: bool = False,
 ) -> dict:
     """One same-generation held page; stat the owned journal before re-hashing.
 
@@ -510,6 +510,9 @@ def wait_full_uuid_event_page(
         native=native,
     )
     observer = RuntimeObserver(store, target)
+    # A follow that last reported live: a runtime gone before this read's
+    # first sample is still a change, reported at once.
+    observer.seen_live = seen_live
     observer.sample()
 
     def done(current: dict, gap, timed_out: bool) -> dict:
@@ -605,6 +608,7 @@ def follow_full_uuid_events(
             page = wait_full_uuid_event_page(
                 store, target, after=cursor, kinds=kinds,
                 limit=MAX_PAGE_EVENTS, wait=duration, native=native,
+                seen_live=runtime == "live",
             )
             # Presence comes from the held read only; an unheld page is one sample.
             changed, runtime = page["runtime"] != runtime, page["runtime"]
