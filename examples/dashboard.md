@@ -13,6 +13,7 @@ GitHub with uv, or download `dashboard.py` and run it with `python3`:
 uv run https://raw.githubusercontent.com/ccx-native/ccx/main/examples/dashboard.py
 python3 dashboard.py                 # Interactive: active scope
 python3 dashboard.py --scope all     # Include stopped/historical workers
+python3 dashboard.py --dir ~/project # Only workers in that directory or below it
 python3 dashboard.py --once          # One text snapshot, no terminal needed
 python3 dashboard.py --once --json   # One JSON object
 ```

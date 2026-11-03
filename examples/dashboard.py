@@ -227,6 +227,13 @@ def footer_hints(row: dict | None, status: dict | None) -> str:
     return " · ".join(hints)
 
 
+def short_path(path: str | None) -> str:
+    """Show the home directory as ~."""
+    home = os.path.expanduser("~")
+    text = clean(path)
+    return "~" + text[len(home):] if text == home or text.startswith(home + "/") else text
+
+
 def clean(text: str | None, limit: int | None = None) -> str:
     """Collapse whitespace/newlines to a single safe line for table/row rendering."""
     if not text:
@@ -467,6 +474,7 @@ class Store:
 
 SCOPES = ["active", "all"]
 SCOPE_FLAGS = {"active": ["--active"], "all": []}
+LIST_FILTERS: list[str] = []  # --dir: passed through to `ccx list`
 
 
 def session_identity(row: dict) -> str | None:
@@ -499,7 +507,8 @@ def fetch_statuses(ccx_bin: str, workers: list[str], runner) -> tuple[dict[str, 
 
 def _list_rows(ccx_bin: str, scope: str, runner) -> tuple[list[dict] | None, str | None]:
     """Fetch both engines from the canonical recorded CLI inventory."""
-    return runner(ccx_bin, ["list", "--json", *SCOPE_FLAGS[scope]], timeout=15.0)
+    return runner(ccx_bin, ["list", "--json", *SCOPE_FLAGS[scope], *LIST_FILTERS],
+                  timeout=15.0)
 
 
 class Poller(threading.Thread):
@@ -1240,7 +1249,7 @@ class App:
             ("TURNS", str(s.get("turns") or 0), base),
             ("CONTEXT", fmt_tokens(tokens), base),
             ("LAST", fmt_age(s.get("last_turn_at") or s.get("created_at")), base),
-            ("CWD", clean(s.get("cwd")), base | curses.A_DIM),
+            ("CWD", short_path(s.get("cwd")), base | curses.A_DIM),
         ]
         # Fill the whole row with the selection bar first.
         if selected:
@@ -1832,7 +1841,7 @@ def render_snapshot(ccx_bin: str, scope: str, runner=None) -> str:
                f"{clean(s.get('name'), 18) or '—':<{W['NAME']}} "
                f"{str(s.get('turns') if s.get('turns') is not None else '—'):>{W['TURNS']}} "
                f"{fmt_tokens(context_tokens(s)):>{W['CONTEXT']}} "
-               f"{fmt_age(s.get('last_turn_at')):>{W['LAST']}}  {clean(s.get('cwd'))}")
+               f"{fmt_age(s.get('last_turn_at')):>{W['LAST']}}  {short_path(s.get('cwd'))}")
         lines.append(row)
     return "\n".join(lines) + "\n"
 
@@ -1849,6 +1858,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="Path to the ccx executable (default: $CCX_BIN, then PATH, then ../ccx.py).")
     p.add_argument("--scope", default="active", choices=SCOPES,
                    help="Initial session scope (default: active). Cycle live with Tab.")
+    p.add_argument("--dir", default=None, metavar="PATH",
+                   help="Only workers whose working directory is PATH or inside it.")
     p.add_argument("--once", "--snapshot", dest="once", action="store_true",
                    help="Print a one-shot snapshot to stdout and exit. "
                         "No curses or tty required; suitable for CI / scripts.")
@@ -1857,6 +1868,8 @@ def main(argv: list[str] | None = None) -> int:
                         "human text. Has no effect (and is rejected) without --once.")
     args = p.parse_args(argv)
     ccx_bin = args.ccx_bin or find_ccx_bin()
+    if args.dir:
+        LIST_FILTERS[:] = ["--dir", os.path.abspath(os.path.expanduser(args.dir))]
 
     # Fail fast with a friendly message if ccx isn't runnable at all.
     probe = run_ccx(ccx_bin, ["--help"], timeout=10)
