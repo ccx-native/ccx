@@ -1,5 +1,25 @@
 # Contributing to ccx
 
+ccx is maintained by one person, so the scope for outside pull requests is narrow.
+
+**Welcome as pull requests:**
+
+- Bug fixes, small and focused.
+- Compatibility fixes for new Claude Code or Codex releases.
+- Performance improvements that don't change behavior.
+- Doc fixes: wrong commands, broken links, unclear steps.
+
+**Not accepted as pull requests:**
+
+- New features, commands or options.
+- Refactors, renames and style-only changes.
+- Changes to intended behavior or defaults.
+- New runtime dependencies.
+
+For anything in the second list, open an issue describing the problem instead.
+If it fits the project, the maintainer may build it; pull requests for it are
+closed without review.
+
 Keep changes focused, dependency-free at runtime, and covered by the quota-free
 test suite.
 
@@ -78,7 +98,9 @@ python3 scripts/check_doc_links.py
 
 ## Pull requests
 
-Describe the user-visible effect and validation. CI must pass before merge.
+One fix per pull request. Describe the user-visible effect and how you tested it,
+including the Claude Code or Codex version for compatibility fixes. CI must pass
+before merge.
 
 ## Known limitations
 

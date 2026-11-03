@@ -225,12 +225,6 @@ Start with [Getting started](docs/getting-started.md) and
 
 ## Contributing, security, license
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+Small fixes are welcome as pull requests; for new features, open an issue
+instead. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 Released under the [MIT License](LICENSE).
-
-## Known limitations
-
-- Runs locally under one user on Linux, macOS or WSL2.
-- Claude Code or Codex updates can break ccx. See
-  [Troubleshooting](docs/troubleshooting.md#after-upgrading-claude-code-or-codex).
-- Usage caps are sampled and can overshoot. See [Usage and caps](docs/usage.md).
