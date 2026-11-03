@@ -171,21 +171,36 @@ same workflow.
 
 ## Install
 
-You need Python 3.11 or newer on Linux, macOS or WSL2, and at least one of
-[Claude Code](https://docs.claude.com/en/docs/claude-code) or
-[Codex](https://github.com/openai/codex), installed and logged in. Tested with
-Claude Code 2.1.316 and Codex 0.166, on WSL2, macOS 12 (Intel) and
-macOS 27 (Apple silicon).
+You need:
 
-The package is `ccx-native`; the command is `ccx`. The npm package needs Python
-3.11+ on your `PATH`. `uv tool install ccx-native` and `pipx install ccx-native`
-work too. The first command that needs the store creates it in `~/.ccx`. If
-`ccx` isn't found afterwards, see [Installing](docs/troubleshooting.md#installing).
+- Linux, macOS or WSL2, with Python 3.11 or newer
+- [Claude Code](https://docs.claude.com/en/docs/claude-code),
+  [Codex](https://github.com/openai/codex) or both, installed and signed in
 
-`ccx skills install` is optional. It copies the agent skill into the skills
-folder of each engine you have (`~/.claude/skills`, `~/.agents/skills`), so
-Claude Code and Codex know how to use ccx, and keeps it current when you upgrade.
-To use [skills.sh](https://skills.sh) instead: `npx skills add ccx-native/ccx -g`.
+Install ccx with whichever tool you like:
+
+```bash
+npm install -g ccx-native     # needs Python 3.11+ on your PATH
+uv tool install ccx-native
+pipx install ccx-native
+```
+
+The package is `ccx-native`; the command is `ccx`. There's nothing to set up:
+ccx creates its store in `~/.ccx` the first time it needs it.
+
+Optionally, teach your agents to use it:
+
+```bash
+ccx skills install
+```
+
+This adds the ccx skill to Claude Code and Codex (`~/.claude/skills`,
+`~/.agents/skills`) and keeps it current when you upgrade. With
+[skills.sh](https://skills.sh): `npx skills add ccx-native/ccx -g`.
+
+Tested with Claude Code 2.1.316 and Codex 0.166 on WSL2, macOS 12 (Intel) and
+macOS 27 (Apple silicon). If `ccx` isn't found after installing, see
+[Installing](docs/troubleshooting.md#installing).
 
 ## Risks and system changes
 
