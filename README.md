@@ -1,11 +1,10 @@
 # ccx
 
-**Control and monitor native Claude Code and Codex sessions from the CLI, Python
-or RPC.**
+**Run native Claude Code and Codex as persistent shared workers.**
 
-You, your agents and your scripts share the same persistent sessions. They run
-on your own Claude and ChatGPT subscriptions with your existing setup, and you
-can open any of them live with `ccx attach`.
+You, your agents and your scripts can all start, message, steer and check on the
+same workers. They run on your own Claude and ChatGPT subscriptions with your
+existing setup, and you can open any of them live with `ccx attach`.
 
 ```bash
 npm install -g ccx-native

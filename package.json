@@ -1,7 +1,7 @@
 {
   "name": "ccx-native",
   "version": "0.1.0",
-  "description": "Control and monitor native Claude Code and Codex sessions from the CLI, Python or RPC, on your own subscriptions.",
+  "description": "Native Claude Code and Codex sessions shared by your agents, scripts and terminals. Works with your own Claude and ChatGPT subscriptions.",
   "author": "Fernando <ccx@delega.ai>",
   "license": "MIT",
   "bin": {
