@@ -12,9 +12,8 @@ npm install -g ccx-native
 ccx skills install
 ```
 
-[Docs](docs/getting-started.md) · Unofficial: read
+[▶ Examples](#examples) · [Docs](docs/getting-started.md) · Unofficial: read
 [Risks and system changes](#risks-and-system-changes).
-<!-- Add "▶ Examples" here once the videos are in. -->
 
 ## Features
 
@@ -60,11 +59,11 @@ Use `--engine codex` for a Codex worker. Replace `1a2b3c4d` with a unique prefix
 of at least 8 characters from the id `ccx new` prints. The rest (`steer`, `peek`,
 `compact`, `kill`, ...) are there when you need them; `ccx help` lists them all.
 
-<!-- ## Examples
+## Examples
 
 ### Codex drives Claude Code and Codex workers
 
-VIDEO
+https://github.com/user-attachments/assets/849efe10-4f8c-457d-a08e-eea7bf17af17
 
 I asked Codex for a Claude worker to implement a design, then for a Codex worker
 to check the proxy setup in parallel. Left: the Codex app. Right: its terminal,
@@ -75,13 +74,12 @@ the Codex worker · 1:45 Codex compacts Claude before the next step.
 
 ### Native Claude Code and Codex, one Python API
 
-VIDEO
+https://github.com/user-attachments/assets/661f5247-7614-40e8-866b-b8e9742b158b
 
 Right: a web chat built on the ccx Python API. Left: the same Claude Code session,
 open with `ccx attach`. Only the chat is used: Claude runs the slow tests in the
 background and has a Codex worker review its changes. Both are the native
 harnesses, driven through the same API.
--->
 
 ## Controllers
 
