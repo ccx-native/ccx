@@ -1,25 +1,161 @@
 # ccx
 
-Run Claude Code and Codex as persistent local workers. Start them in any folder,
-send follow-ups and read their replies. Coordinate several workers from the
-terminal, a script or another agent.
+**Control and monitor native Claude Code and Codex sessions from the CLI, Python
+or RPC.**
 
-Workers can be driven by your main agent, by a script, or by you: `ccx attach`
-opens any worker in the engine's own interface, and `ccx import` brings in a
-session you started yourself. [`examples/dashboard.py`](examples/dashboard.md)
-is a small terminal dashboard for watching and joining workers.
+Your agent, your scripts and you all drive the same persistent sessions, with
+your own setup, and you can open any of them live with `ccx attach`.
 
-- **What it is:** a CLI and Python library that drives the real `claude` and
-  `codex` tools, logged in with your own accounts. A worker keeps its folder,
-  history and settings across turns and restarts.
-- **Who it's for:** developers who run several agents locally, or want an agent
-  to delegate to other agents.
-- **What it isn't:** a hosted service or an API client. For large-scale or
-  multi-tenant automation, use the Claude Agent SDK or the OpenAI APIs.
+```bash
+npm install -g ccx-native
+ccx skills install
+```
+
+[Docs](docs/getting-started.md) · Unofficial: read
+[Before you use it](#before-you-use-it).
+<!-- Add "▶ See it work" here once the video is in. -->
+
+## What you can do with it
+
+- **Let Codex run Claude Code.** Codex starts Claude Code workers, is woken when
+  they finish, reviews their work and sends fixes back. Claude Code can drive
+  Codex workers the same way.
+- **Learn a handful of commands.** The same `new`, `send`, `wait`, `report` and
+  `attach` drive both engines, from an agent, a script or your terminal.
+- **Keep your setup.** Workers are ordinary Claude Code and Codex sessions: your
+  config, `CLAUDE.md`/`AGENTS.md`, hooks, skills and MCP servers all apply. Start
+  one in any folder, which a subagent can't do.
+- **Join any session live.** `ccx attach` opens a worker in the engine's own
+  interface while agents keep driving it. `ccx import` brings in a session you
+  started yourself.
+- **Find every worker in one place.** Workers keep their history across turns and
+  restarts, stop when idle and come back on the next message. `ccx list` and
+  `ccx peek` show them all, from any agent or terminal.
+- **Keep long work going.** Steer a running turn, compact a worker's context
+  between steps, and stop work at a usage cap.
+- **Build on it.** A [Python API](docs/python/README.md),
+  [controllers](docs/controllers.md) and a local [JSON protocol](docs/rpc/README.md)
+  put workers inside your own tools, dashboards and services.
+
+Any agent that can run a shell command can drive workers.
+
+## A few commands, both engines
+
+Most work needs five commands, the same for Claude Code and Codex workers:
+
+```bash
+ccx new --engine claude "Implement the plan in PLAN.md"   # prints claude:1a2b3c4d-...
+ccx wait 1a2b3c4d
+ccx report 1a2b3c4d
+ccx send 1a2b3c4d "Also update the changelog"
+ccx attach 1a2b3c4d
+```
+
+Use `--engine codex` for a Codex worker. Workers are targeted by the first 8
+characters of their id or more. The rest (`steer`, `peek`, `compact`, `kill`,
+...) are there when you need them; `ccx help` lists them all.
+
+<!-- ## See it work
+
+### Codex runs a Claude and a Codex worker on a real task
+
+VIDEO
+
+I asked Codex for a Claude worker to implement a design, then for a Codex worker
+to check the proxy setup in parallel. Left: the Codex app. Right: its terminal,
+where I attach to the workers and open the dashboard.
+
+Watch for: 0:33 Claude finishes and Codex wakes up · 1:29 Codex tells Claude about
+the Codex worker · 1:45 Codex compacts Claude before the next step.
+-->
+
+## Controllers
+
+A controller is a Python script that runs a multi-step flow across workers. It
+can stop at a checkpoint for the owner's decision, then resume without redoing
+finished steps.
+
+```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
+sequenceDiagram
+  participant O as Owner<br/>(you or your agent)
+  participant C as Controller
+  participant CL as Claude worker
+  participant CX as Codex worker
+  O->>C: ccx controller run deploy.py --notify-parent
+  rect rgba(201, 100, 66, 0.12)
+    C->>CL: design template.yaml
+    C->>CX: security review
+    CX-->>C: findings
+    C->>CL: fix the findings
+    C->>CL: write the runbook, create the change set
+  end
+  C-->>O: report: change set ready (wakes the owner)
+  Note over C: The controller stops here
+  O->>C: ccx controller resume deploy --note "Go"
+  Note over C: Finished steps are skipped
+  rect rgba(59, 111, 182, 0.12)
+    C->>CL: deploy the change set, with the owner's note
+    C->>CX: verify the live stack
+    C->>CL: write the ops notes
+  end
+  C-->>O: final report (wakes the owner)
+```
+
+```python
+from ccx import WorkerClient, controller, current, task
+
+workers = WorkerClient()
+
+@task
+def security_review():                    # a fresh Codex worker returns its findings
+    found = {"issues": None}
+    workers.create(engine="codex", model="gpt-6.1-sol", cwd=str(current.workspace),
+                   prompt=REVIEW_PROMPT, variables=found, wait=True)
+    return found["issues"]
+
+# design, fix, prepare, deploy, verify and handover are tasks like this one.
+
+@controller(name="deploy")
+def main():
+    design()                                      # Claude writes template.yaml
+    issues = security_review()
+    if issues:
+        fix(issues)                               # the same Claude worker fixes them
+    change_set = prepare()                        # Claude: runbook + change set
+    if not current.inputs:                        # checkpoint: stop until the owner resumes
+        return current.report(status="awaiting-approval", checkpoint="deploy",
+                              summary="Change set ready. Resume with a note to deploy.",
+                              data={"change_set": change_set})
+    deploy(change_set, current.inputs[0].comment) # Claude follows the runbook
+    verify()                                      # Codex smoke-tests the live stack
+    handover()                                    # Claude writes the ops notes
+    current.report(status="completed", summary="Deployed, verified and documented.")
+```
+
+[Controllers](docs/controllers.md) explains resume and has runnable examples.
+
+## Install
+
+You need Python 3.11 or newer on Linux, macOS or WSL2, and at least one of
+[Claude Code](https://docs.claude.com/en/docs/claude-code) or
+[Codex](https://github.com/openai/codex), installed and logged in. Tested with
+Claude Code 2.1.316 and Codex 0.166, on WSL2, macOS 12 (Intel) and
+macOS 27 (Apple silicon).
+
+The package is `ccx-native`; the command is `ccx`. The npm package needs Python
+3.11+ on your `PATH`. `uv tool install ccx-native` and `pipx install ccx-native`
+work too. The first command that needs the store creates it in `~/.ccx`. If
+`ccx` isn't found afterwards, see [Installing](docs/troubleshooting.md#installing).
+
+`ccx skills install` is optional. It copies the agent skill into the skills
+folder of each engine you have (`~/.claude/skills`, `~/.agents/skills`), so
+Claude Code and Codex know how to use ccx, and keeps it current when you upgrade.
+To use [skills.sh](https://skills.sh) instead: `npx skills add ccx-native/ccx -g`.
+
+## Before you use it
 
 > [!IMPORTANT]
-> **Before you use it**
->
 > - **Unofficial.** ccx is an independent project, not affiliated with or
 >   endorsed by Anthropic or OpenAI. Using Claude Code and Codex through it is
 >   still subject to their terms.
@@ -37,77 +173,6 @@ is a small terminal dashboard for watching and joining workers.
 >   shell functions inside worker shells for [variables](docs/variables/README.md).
 >   [What ccx changes on your machine](docs/machine-changes.md) has the full list.
 
-## Install
-
-You need Python 3.11 or newer on Linux, macOS or WSL2, and at least one of
-[Claude Code](https://docs.claude.com/en/docs/claude-code) or
-[Codex](https://github.com/openai/codex), installed and logged in. Tested with
-Claude Code 2.1.316 and Codex 0.166, on WSL2, macOS 12 (Intel) and
-macOS 27 (Apple silicon).
-
-```bash
-uv tool install ccx-native
-ccx skills install
-```
-
-The package is `ccx-native`; the command is `ccx`. `pipx install ccx-native`
-and `npm install -g ccx-native` work too (npm needs Python 3.11+ on your
-`PATH`). The first command that needs the store creates it in `~/.ccx`. If
-`ccx` isn't found afterwards, see [Installing](docs/troubleshooting.md#installing).
-
-`ccx skills install` is optional. It copies the agent skill into the skills
-folder of each engine you have (`~/.claude/skills`, `~/.agents/skills`), so
-Claude Code and Codex know how to use ccx, and keeps it current when you upgrade.
-To use [skills.sh](https://skills.sh) instead: `npx skills add ccx-native/ccx -g`.
-
-## Quick start
-
-```bash
-W=$(ccx new --engine claude --cwd ~/myproject "List the .py files here")
-ccx wait "$W"
-ccx report "$W"
-ccx send "$W" "Now count their lines"
-ccx attach "$W"
-```
-
-`ccx new` prints the worker's handle, `claude:<uuid>`. `wait` returns when the
-first turn finishes, `report` prints the reply, and `send` adds a follow-up and
-prints its reply. `attach` opens the worker in your terminal; Ctrl-Z detaches. Use `--engine codex` for a
-Codex worker; every command works the same. Add `--model haiku` (Claude) or
-`--model gpt-6-luna --effort low` (Codex) to keep experiments cheap.
-
-From Python (install `ccx-native` in your project's environment):
-
-```python
-from ccx import WorkerClient
-
-workers = WorkerClient()
-created = workers.create(engine="claude", cwd="/path/to/project",
-                         prompt="List the .py files here", wait=True)
-worker = created["worker"]
-print(created["reply"])
-print(workers.send(worker, "Now count their lines")["reply"])
-```
-
-## What else it does
-
-- **Steer and answer:** add to a running turn (`steer`), answer questions and
-  permission requests (`answer`, `approve`, `reject`), cancel a turn (`stop`).
-- **Orchestration:** a Codex parent gets woken when a worker finishes
-  (`--notify-parent`); Claude parents and scripts use `ccx wait`.
-  [Waiting for results](docs/concepts.md#waiting-for-results)
-- **Controllers:** Python workflows that run unattended, branch on results, and
-  resume after an interruption without redoing finished steps.
-  [Controllers](docs/controllers.md)
-- **Variables:** structured JSON state that workers read and update with plain
-  `python3`, shared across engines. [Variables](docs/variables/README.md)
-- **Context management:** `ccx compact`, `ccx fork`, and `peek --status` to see
-  how full a worker's context is.
-- **Usage:** `ccx usage` shows your Claude and Codex plan limits, and caps
-  stop a turn at a limit you set. [Usage and caps](docs/usage.md)
-- **Local JSON protocol:** `ccx rpc` for callers in other languages.
-  [RPC](docs/rpc/README.md)
-
 ## Docs
 
 Start with [Getting started](docs/getting-started.md) and
@@ -116,6 +181,7 @@ Start with [Getting started](docs/getting-started.md) and
 [Usage and caps](docs/usage.md) ·
 [Codex workers](docs/codex.md) ·
 [Controllers](docs/controllers.md) ·
+[Variables](docs/variables/README.md) ·
 [Troubleshooting](docs/troubleshooting.md) ·
 [What ccx changes on your machine](docs/machine-changes.md) ·
 [Python API](docs/python/README.md) ·
