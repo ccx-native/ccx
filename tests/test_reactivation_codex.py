@@ -464,7 +464,10 @@ def test_rate_limited_turn_system_error_resume_then_next_turn(
             time.sleep(.04)
         failed = store.record(B)
         assert failed['lifecycle']['state'] == 'crashed'
-        assert failed['lifecycle']['lastError'] == 'Codex thread system error'
+        assert failed['lifecycle']['lastError'] == (
+            'Codex thread system error: '
+            'exceeded retry limit, last status: 429 Too Many Requests'
+        )
         assert failed['lastTurn']['status'] == 'failed'
         assert failed['lastTurn']['error']['message'] == (
             'exceeded retry limit, last status: 429 Too Many Requests'
@@ -526,7 +529,8 @@ def test_rate_limited_turn_system_error_resume_then_next_turn(
         second_failure = store.record(B)
         assert second_failure['lastTurn']['status'] == 'failed'
         assert second_failure['lifecycle']['state'] == 'crashed'
-        assert second_failure['lifecycle']['lastError'] == 'Codex thread system error'
+        assert second_failure['lifecycle']['lastError'].startswith(
+            'Codex thread system error: exceeded retry limit')
         assert _trace_count(trace, 'RPC thread/start') == 1
         assert _trace_count(trace, 'RPC thread/resume') == 1
         assert _trace_count(trace, 'RPC turn/start') == 3

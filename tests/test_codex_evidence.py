@@ -499,6 +499,36 @@ def test_codex_admitted_auto_compact_terminal_is_one_sparse_pair(
         worker.evidence.close()
 
 
+def test_codex_crash_reason_names_the_native_error(original_codex):
+    # Live order: the thread's systemError status arrives before the failed
+    # turn/completed that carries Codex's own message (here a refused compact).
+    from ccx.codex.daemon.daemon import CodexDaemon
+    from ccx.codex.daemon.worker import Worker
+
+    store, _, owner, tid = original_codex
+    daemon = CodexDaemon()
+    daemon._uuid_store = store
+    worker = Worker(daemon, store.record(owner))
+    turn_id = "refused-compact"
+    message = "Error running remote compact task: This request was blocked."
+    try:
+        worker.on_notification("turn/started", {"threadId": tid, "turn": {"id": turn_id}})
+        worker.on_notification("thread/status/changed", {
+            "threadId": tid, "status": {"type": "systemError"},
+        })
+        assert worker.record["lifecycle"]["lastError"] == "Codex thread system error"
+        worker.on_notification("turn/completed", {
+            "threadId": tid,
+            "turn": {"id": turn_id, "status": "failed", "items": [],
+                     "error": {"message": message}},
+        })
+        lifecycle = worker.record["lifecycle"]
+        assert lifecycle["state"] == "crashed"
+        assert lifecycle["lastError"] == "Codex thread system error: " + message
+    finally:
+        worker.evidence.close()
+
+
 def test_background_command_promoted_at_turn_end_and_late_exit_pushed(original_codex):
     from ccx.codex.daemon.daemon import CodexDaemon
     from ccx.codex.daemon.worker import Worker

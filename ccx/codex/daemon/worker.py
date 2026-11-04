@@ -23,6 +23,14 @@ if TYPE_CHECKING:
 _TERMINAL_STATES = {"dead", "idle-killed", "crashed", "budget-stopped"}
 
 
+def _system_error_reason(error) -> str:
+    """The crash reason, with Codex's own error message when there is one."""
+    message = error.get("message") if isinstance(error, dict) else None
+    if isinstance(message, str) and message.strip():
+        return "Codex thread system error: " + message.strip()[:500]
+    return "Codex thread system error"
+
+
 _PARENT_NOTIFY_FENCES = 32
 
 
@@ -1373,8 +1381,21 @@ class Worker:
                                     reason="Codex thread system error",
                                 )
                         self._abandon_active_compact_locked("Codex thread system error")
-                        self.record["lifecycle"]["state"] = "crashed"
-                        self.record["lifecycle"]["lastError"] = "Codex thread system error"
+                        # Best effort: name the native cause when it is
+                        # already known (Codex may also report it later, on
+                        # turn/completed).
+                        lifecycle = self.record["lifecycle"]
+                        native_error = None
+                        active_error = self.record.get("activeTurnError")
+                        last_turn = self.record.get("lastTurn")
+                        if lifecycle.get("activeTurnId"):
+                            if (isinstance(active_error, dict) and active_error.get("turnId")
+                                    == lifecycle.get("activeTurnId")):
+                                native_error = active_error.get("error")
+                        elif isinstance(last_turn, dict) and last_turn.get("status") == "failed":
+                            native_error = last_turn.get("error")
+                        lifecycle["state"] = "crashed"
+                        lifecycle["lastError"] = _system_error_reason(native_error)
             elif method == "turn/completed":
                 changed = True
                 turn = params.get("turn") or {}
@@ -1527,6 +1548,12 @@ class Worker:
                     # demote a worker whose runtime health is already known to
                     # be bad.
                     self.record["lifecycle"]["state"] = "crashed"
+                    # Best effort: name the native cause (a 429, a refused
+                    # compact) instead of only the generic status.
+                    if self.record["lifecycle"].get("lastError") == _system_error_reason(None):
+                        self.record["lifecycle"]["lastError"] = (
+                            _system_error_reason(turn.get("error"))
+                        )
                 elif isinstance(self.record.get("activeCompact"), dict):
                     # A foreign/native turn can settle while compaction still
                     # owns its own operation fence. Do not publish idle until
