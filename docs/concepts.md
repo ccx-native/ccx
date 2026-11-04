@@ -17,7 +17,7 @@ replies.
   dashboard. It is never used to pick a worker.
 - `ccx attach` opens a worker in the engine's own interface so you can work in
   it directly. ccx keeps running the worker, and other commands keep working
-  while you're attached.
+  while you're attached. Several terminals can attach to the same worker.
 - `ccx import` brings in a session you started outside ccx, keeping its
   history. A Claude Code session moves into ccx, so stop using it in the old
   terminal. A Codex thread is copied into a new worker, and the original stays

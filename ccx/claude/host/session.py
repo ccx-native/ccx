@@ -3979,6 +3979,7 @@ def _run_host(args):
                 # Brokered requests waiting behind `waitingFor`, oldest first.
                 "queuedInputs": len(state["permission_queue"]),
                 "attached": hub.attached,
+                "attachedTerminals": len(hub.viewers),
                 # Is the local /compact pump still running? The pump is bounded
                 # by its own deadline and can give up without writing a
                 # boundary, so a client waiting for one needs to know when to
@@ -4332,7 +4333,7 @@ def _run_host(args):
                     continue
                 progress = True
                 buf.extend(data)
-                if (hub.conn is conn and len(buf) > MAX_ATTACH_LINE
+                if (hub.has(conn) and len(buf) > MAX_ATTACH_LINE
                         and b"\n" not in buf):
                     hub.release(conn, "oversized-attachment-frame")
                     drop_client(conn)
@@ -4345,20 +4346,20 @@ def _run_host(args):
                     buf.extend(rest)
                     if not line.strip():
                         continue
-                    if hub.conn is conn and len(line) > MAX_ATTACH_LINE:
+                    if hub.has(conn) and len(line) > MAX_ATTACH_LINE:
                         hub.release(conn, "oversized-attachment-frame")
                         drop_client(conn)
                         break
                     try:
                         msg = json.loads(line)
                     except (UnicodeError, ValueError):
-                        if hub.conn is conn:
+                        if hub.has(conn):
                             hub.release(conn, "malformed-attachment-frame")
                             drop_client(conn)
                             break
                         continue
                     if not isinstance(msg, dict):
-                        if hub.conn is conn:
+                        if hub.has(conn):
                             hub.release(conn, "malformed-attachment-frame")
                             drop_client(conn)
                             break
@@ -4941,7 +4942,7 @@ def _run_host(args):
                 part, timeout_s=.01, absolute_timeout_s=.01))
             # Build select set
             rlist = [server, master_fd] + list(state["clients"].keys())
-            wlist = [hub.conn] if hub.attached and hub.output else []
+            wlist = hub.pending()
             try:
                 fast_observe = (
                     state.get("interrupt_observation") is not None
@@ -4949,14 +4950,14 @@ def _run_host(args):
                     or state.get("successor_pending") is not None
                 )
                 select_timeout = INTERRUPT_NATIVE_POLL_S if fast_observe else 1.0
-                if hub.attached and (hub.input or hub.output or hub.repaint_at):
+                if hub.busy():
                     select_timeout = min(select_timeout, .05)
                 r, writable, _ = select.select(rlist, wlist, [], select_timeout)
             except (InterruptedError, OSError):
                 continue
 
-            if hub.attached and hub.conn in writable:
-                hub.flush()
+            for conn in writable:
+                hub.flush(conn)
             for src in r:
                 if src is server:
                     try:
@@ -4989,7 +4990,7 @@ def _run_host(args):
                         drop_client(conn)
                         continue
                     buf.extend(data)
-                    if (hub.conn is conn and len(buf) > MAX_ATTACH_LINE
+                    if (hub.has(conn) and len(buf) > MAX_ATTACH_LINE
                             and b"\n" not in buf):
                         hub.release(conn, "oversized-attachment-frame")
                         drop_client(conn)
@@ -4998,7 +4999,7 @@ def _run_host(args):
                     while b"\n" in buf:
                         if fd not in state["clients"]:
                             break  # attach-close or overflow already removed this fd
-                        if hub.conn is conn and attach_frames >= 64:
+                        if hub.has(conn) and attach_frames >= 64:
                             hub.release(conn, "input-frame-flood")
                             drop_client(conn)
                             break
@@ -5008,20 +5009,20 @@ def _run_host(args):
                         buf.extend(rest)
                         if not line.strip():
                             continue
-                        if hub.conn is conn and len(line) > MAX_ATTACH_LINE:
+                        if hub.has(conn) and len(line) > MAX_ATTACH_LINE:
                             hub.release(conn, "oversized-attachment-frame")
                             drop_client(conn)
                             break
                         try:
                             msg = json.loads(line)
                         except (UnicodeError, ValueError):
-                            if hub.conn is conn:
+                            if hub.has(conn):
                                 hub.release(conn, "malformed-attachment-frame")
                                 drop_client(conn)
                                 break
                             continue
                         if not isinstance(msg, dict):
-                            if hub.conn is conn:
+                            if hub.has(conn):
                                 hub.release(conn, "malformed-attachment-frame")
                                 drop_client(conn)
                                 break
@@ -5049,10 +5050,7 @@ def _run_host(args):
                 state["pending_last_error"] = reason
             break
 
-    if hub.attached:
-        conn = hub.conn
-        hub.release(conn, "host-exit")
-        drop_client(conn)
+    hub.release_all("host-exit")
 
     # Shutdown.  Reconcile an active compact before tearing down its host/PTY.
     # A boundary may have landed on the final loop tick; if not, preserve the

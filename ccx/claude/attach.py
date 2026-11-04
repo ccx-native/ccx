@@ -1,4 +1,4 @@
-"""One authenticated, bounded shared terminal stream for a managed Claude PTY.
+"""Authenticated, bounded shared terminal streams for a managed Claude PTY.
 
 Only the host select loop reads/writes the PTY.  This module owns framing and
 local TTY lifecycle; it never launches, parks or resumes a native Claude.
@@ -27,6 +27,7 @@ MAX_PENDING_INPUT = 64 * 1024
 MAX_PENDING_OUTPUT = 1024 * 1024
 MAX_ATTACH_LINE = 48 * 1024  # 32 KiB base64 + envelope
 MAX_DIMENSION = 1000
+MAX_VIEWERS = 8  # terminals attached to one worker at once
 
 
 def frame(op: str, **fields) -> bytes:
@@ -52,8 +53,23 @@ def decode_input(data) -> bytes:
     return raw
 
 
+class _Viewer:
+    """One attached terminal: its lease token, size and byte queues."""
+
+    def __init__(self, rows, cols):
+        self.token = uuid.uuid4().hex
+        self.size = (rows, cols)
+        self.input = bytearray()
+        self.output = bytearray()
+
+
 class HostAttachment:
-    """Hot-only lease and byte queues. Host invokes all methods on its I/O loop."""
+    """Hot-only leases and byte queues for up to MAX_VIEWERS terminals.
+
+    Every terminal sees the same PTY output and may type. The PTY takes the
+    smallest rows and columns among them, so each one displays correctly.
+    The host invokes all methods on its I/O loop.
+    """
 
     def __init__(self, master_fd, resize, event, disconnect, on_release):
         self.master_fd = master_fd
@@ -61,121 +77,150 @@ class HostAttachment:
         self.event = event
         self.disconnect = disconnect
         self.on_release = on_release
-        self.conn = None
-        self.token = None
-        self.input = bytearray()
-        self.output = bytearray()
+        self.viewers: dict = {}
         self.saved_size = None
-        self.requested = None
         self.repaint_at = None
 
     @property
     def attached(self):
-        return self.conn is not None
+        return bool(self.viewers)
+
+    def has(self, conn):
+        return conn in self.viewers
+
+    def pending(self):
+        """Connections with queued output (the host's select write set)."""
+        return [conn for conn, viewer in self.viewers.items() if viewer.output]
+
+    def busy(self):
+        return self.repaint_at is not None or any(
+            viewer.input or viewer.output for viewer in self.viewers.values())
+
+    def size(self):
+        return (min(v.size[0] for v in self.viewers.values()),
+                min(v.size[1] for v in self.viewers.values()))
 
     def open(self, conn, msg, *, epoch):
-        if self.attached:
-            return {"ok": False, "error": "another terminal is already attached"}
+        if conn in self.viewers:
+            return {"ok": False, "error": "this connection is already attached"}
+        if len(self.viewers) >= MAX_VIEWERS:
+            return {"ok": False, "error": f"too many terminals attached (max {MAX_VIEWERS})"}
         if msg.get("version") != VERSION or type(msg.get("version")) is not int:
             return {"ok": False, "error": "unsupported shared attach protocol version"}
         try:
             rows, cols = dimensions(msg.get("rows"), msg.get("cols"))
-            saved = fcntl.ioctl(self.master_fd, termios.TIOCGWINSZ, b"\0" * 8)
-            # Save the complete ioctl payload, including pixel dimensions.
-            if len(saved) != 8:
-                raise OSError("PTY size unavailable")
-            self.resize(rows, cols - 1 if cols > 1 else 2)
+            saved = self.saved_size
+            if saved is None:
+                saved = fcntl.ioctl(self.master_fd, termios.TIOCGWINSZ, b"\0" * 8)
+                # Save the complete ioctl payload, including pixel dimensions.
+                if len(saved) != 8:
+                    raise OSError("PTY size unavailable")
+            viewer = _Viewer(rows, cols)
+            self.viewers[conn] = viewer
+            try:
+                # A one-column nudge makes Claude redraw for the newcomer.
+                rows, cols = self.size()
+                self.resize(rows, cols - 1 if cols > 1 else 2)
+            except OSError:
+                del self.viewers[conn]
+                raise
         except (ValueError, OSError) as exc:
             return {"ok": False, "error": str(exc)}
-        self.conn = conn
-        self.token = uuid.uuid4().hex
         self.saved_size = saved
-        self.requested = (rows, cols)
         self.repaint_at = time.monotonic() + .12
-        self.input.clear()
-        self.output.clear()
         self.event({"type": "attach_opened"})
         return {"ok": True, "op": "attach-opened", "version": VERSION,
-                "token": self.token, "epoch": epoch}
+                "token": viewer.token, "epoch": epoch}
 
     def owns(self, conn, msg):
-        return (self.conn is conn and isinstance(msg.get("token"), str)
-                and msg["token"] == self.token)
+        viewer = self.viewers.get(conn)
+        return (viewer is not None and isinstance(msg.get("token"), str)
+                and msg["token"] == viewer.token)
 
     def accept_input(self, conn, msg):
         if not self.owns(conn, msg):
             raise ValueError("invalid attachment token or connection")
         raw = decode_input(msg.get("data"))
-        if len(self.input) + len(raw) > MAX_PENDING_INPUT:
+        viewer = self.viewers[conn]
+        if len(viewer.input) + len(raw) > MAX_PENDING_INPUT:
             self.release(conn, "input-overflow")
             self.disconnect(conn)
             return
-        self.input.extend(raw)
+        viewer.input.extend(raw)
 
     def accept_resize(self, conn, msg):
         if not self.owns(conn, msg):
             raise ValueError("invalid attachment token or connection")
-        rows, cols = dimensions(msg.get("rows"), msg.get("cols"))
-        self.requested = (rows, cols)
+        self.viewers[conn].size = dimensions(msg.get("rows"), msg.get("cols"))
         if self.repaint_at is None:
-            self.resize(rows, cols)
+            self.resize(*self.size())
 
     def tick(self, write):
-        if self.conn is None:
+        if not self.viewers:
             return
         if self.repaint_at is not None and time.monotonic() >= self.repaint_at:
             self.repaint_at = None
-            self.resize(*self.requested)
-        if self.input:
-            # Fairness: at most one small PTY write, then serve ordinary RPCs.
-            part = bytes(self.input[:4096])
-            del self.input[:len(part)]
+            self.resize(*self.size())
+        for conn, viewer in list(self.viewers.items()):
+            if not viewer.input:
+                continue
+            # Fairness: at most one small PTY write per terminal, then serve
+            # ordinary RPCs.
+            part = bytes(viewer.input[:4096])
+            del viewer.input[:len(part)]
             if not write(part):
-                conn = self.conn
                 self.release(conn, "pty-write-error")
                 self.disconnect(conn)
 
     def feed_output(self, data: bytes):
-        if not self.attached or not data:
+        if not self.viewers or not data:
             return
         packet = frame("attach-output", data=base64.b64encode(data).decode("ascii"))
-        if len(self.output) + len(packet) > MAX_PENDING_OUTPUT:
-            conn = self.conn
-            self.release(conn, "output-overflow")
-            self.disconnect(conn)
-        else:
-            self.output.extend(packet)
+        for conn, viewer in list(self.viewers.items()):
+            if len(viewer.output) + len(packet) > MAX_PENDING_OUTPUT:
+                # A terminal that fell behind is dropped on its own.
+                self.release(conn, "output-overflow")
+                self.disconnect(conn)
+            else:
+                viewer.output.extend(packet)
 
-    def flush(self):
-        if not self.attached or not self.output:
+    def flush(self, conn):
+        viewer = self.viewers.get(conn)
+        if viewer is None or not viewer.output:
             return
-        conn = self.conn
         try:
-            sent = conn.send(self.output[:32768])
+            sent = conn.send(viewer.output[:32768])
             if not sent:
                 raise OSError("attachment connection closed")
-            del self.output[:sent]
+            del viewer.output[:sent]
         except BlockingIOError:
             return
         except OSError:
             self.release(conn, "connection-lost")
             self.disconnect(conn)
 
+    def release_all(self, reason):
+        for conn in list(self.viewers):
+            self.release(conn, reason)
+            self.disconnect(conn)
+
     def release(self, conn, reason):
-        if self.conn is not conn or conn is None:
-            return
-        self.conn = None  # exactly-once restore, even when callbacks re-enter
-        self.token = None
-        self.input.clear()
-        self.output.clear()
-        self.requested = None
-        self.repaint_at = None
-        saved, self.saved_size = self.saved_size, None
-        if saved is not None:
+        if conn is None or self.viewers.pop(conn, None) is None:
+            return  # exactly once, even when callbacks re-enter
+        if self.viewers:
+            # The remaining terminals may allow a larger size now.
             try:
-                fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, saved)
+                self.resize(*self.size())
             except OSError:
                 pass
+        else:
+            self.repaint_at = None
+            saved, self.saved_size = self.saved_size, None
+            if saved is not None:
+                try:
+                    fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, saved)
+                except OSError:
+                    pass
         self.on_release()
         self.event({"type": "attach_closed", "reason": reason})
         if reason != "client-eof":

@@ -872,7 +872,8 @@ def _add_inventory_parsers(sub) -> None:
         description=(
             "Needs a terminal. A stopped worker is revived; CCX commands remain "
             "available while attached. For both engines, Ctrl-Z detaches and "
-            "leaves the worker running. The CCX status "
+            "leaves the worker running. Several terminals can attach at once; "
+            "a Claude worker then uses the smallest one's size. The CCX status "
             "bar is shown unless --no-status. Codex runs its real native UI; "
             "/quit also exits. Codex may first show its own startup prompts. "
             "Model/permission changes made there do not "

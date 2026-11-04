@@ -113,7 +113,7 @@ def test_protocol_and_atomic_admission(hub):
     c, token = _open(h)
     assert h.attached
     assert sizes == [(25, 89)]  # native redraw nudge
-    assert "already attached" in h.open(object(), {"version": 1, "rows": 30, "cols": 80}, epoch="e")["error"]
+    assert "already attached" in h.open(c, {"version": 1, "rows": 30, "cols": 80}, epoch="e")["error"]
     assert _size(slave)[:2] == (25, 89)
     h.repaint_at = time.monotonic() - 1
     h.tick(lambda raw: True)
@@ -128,6 +128,62 @@ def test_protocol_and_atomic_admission(hub):
     assert _size(slave) == (30, 97, 3, 4)  # restore complete original ioctl payload once
     assert [e["type"] for e in events] == ["attach_opened", "attach_closed"]
     assert not disconnected
+
+
+def test_several_terminals_share_output_input_and_the_smallest_size(hub):
+    h, slave, events, disconnected, release, sizes = hub
+    a, a_token = _open(h, rows=25, cols=90)
+    b, b_token = _open(h, rows=40, cols=120)
+    assert sizes[-1] == (25, 89)  # the newcomer's redraw nudge, at the shared size
+    h.repaint_at = time.monotonic() - 1
+    h.tick(lambda raw: True)
+    assert _size(slave)[:2] == (25, 90)
+    c, c_token = _open(h, rows=20, cols=100)
+    h.repaint_at = time.monotonic() - 1
+    h.tick(lambda raw: True)
+    assert _size(slave)[:2] == (20, 90)  # smallest rows and columns
+
+    # Every terminal sees the same output; each one may type.
+    h.feed_output(b"shared")
+    for conn in (a, b, c):
+        h.flush(conn)
+        assert [base64.b64decode(json.loads(x)["data"]) for x in conn.sent] == [b"shared"]
+    h.accept_input(b, _input(b_token, b"from b"))
+    h.accept_input(a, _input(a_token, b"from a"))
+    writes = []
+    h.tick(lambda part: writes.append(part) or True)
+    assert sorted(writes) == [b"from a", b"from b"]
+    with pytest.raises(ValueError, match="token"):
+        h.accept_input(a, _input(b_token, b"wrong lease"))
+
+    h.accept_resize(b, {"token": b_token, "rows": 18, "cols": 200})
+    assert _size(slave)[:2] == (18, 90)
+    h.release(a, "detached")  # the others may grow, the original stays saved
+    assert _size(slave)[:2] == (18, 100)
+    h.release(b, "detached")
+    assert _size(slave)[:2] == (20, 100)
+    h.release(c, "detached")
+    assert _size(slave) == (30, 97, 3, 4)
+    assert len(release) == 3 and not disconnected
+    assert [e["type"] for e in events] == ["attach_opened"] * 3 + ["attach_closed"] * 3
+
+
+def test_attached_terminals_are_capped_and_one_overflow_drops_only_it(hub):
+    h, _slave, events, disconnected, _release, _sizes = hub
+    conns = [_open(h)[0] for _ in range(A.MAX_VIEWERS)]
+    assert "too many" in h.open(FakeConnection(), {"version": 1, "rows": 20, "cols": 70},
+                                epoch="e")["error"]
+    slow, fast = conns[0], conns[1]
+    for _ in range(2 * A.MAX_PENDING_OUTPUT // 3000):
+        if not h.has(slow):
+            break
+        h.feed_output(b"y" * 3000)
+        for conn in conns[1:]:
+            if h.has(conn):
+                h.flush(conn)
+    assert not h.has(slow) and disconnected == [slow]
+    assert h.has(fast) and len(h.viewers) == A.MAX_VIEWERS - 1
+    assert [e.get("reason") for e in events if e["type"] == "attach_closed"] == ["output-overflow"]
 
 
 def test_binary_input_frames_and_bounded_queue(hub):
@@ -148,7 +204,7 @@ def test_binary_input_frames_and_bounded_queue(hub):
     # 32 KiB is the maximum *frame*, not the pending input budget.
     h.accept_input(c, _input(token, b"a" * 32768))
     h.accept_input(c, _input(token, b"b" * 32768))
-    assert len(h.input) == A.MAX_PENDING_INPUT
+    assert len(h.viewers[c].input) == A.MAX_PENDING_INPUT
     h.accept_input(c, _input(token, b"c"))
     assert not h.attached and disconnected == [c]
 
@@ -163,8 +219,8 @@ def test_byte_exact_output_fanout_and_backpressure(hub):
         pieces = [b"\x1b[0mhello", b"\x00\xfe\xff\r\n", b"\xe2\x98\x83"]
         for part in pieces:
             h.feed_output(part)
-        while h.output:
-            h.flush()
+        while h.viewers[c].output:
+            h.flush(c)
         right.settimeout(.3)
         payload = b""
         while payload.count(b"\n") < len(pieces):
@@ -453,8 +509,14 @@ def test_fake_original_host_stays_single_and_shared_attach_receives_human_turn(
         handle = "claude:" + WORKER_ID
         sock, token = A.open_stream(handle, rows=24, cols=99, initial_output=bytearray())
         assert _wait(lambda: rpc._rpc(handle, {"op": "status"}).get("attached"))
-        with pytest.raises(RuntimeError, match="already attached"):
-            A.open_stream(handle, rows=32, cols=88, initial_output=bytearray())
+        # A second terminal attaches alongside, then detaches on its own.
+        second, second_token = A.open_stream(handle, rows=32, cols=88, initial_output=bytearray())
+        try:
+            assert _wait(lambda: rpc._rpc(handle, {"op": "status"}).get("attachedTerminals") == 2)
+            second.sendall(A.frame("attach-close", token=second_token))
+            assert _wait(lambda: rpc._rpc(handle, {"op": "status"}).get("attachedTerminals") == 1)
+        finally:
+            second.close()
         # A human prompt travels over the *same host PTY* without a second
         # launch. Native hooks record it as an ordinary non-semantic user turn.
         sock.sendall(A.frame("attach-input", token=token,
@@ -473,7 +535,7 @@ def test_fake_original_host_stays_single_and_shared_attach_receives_human_turn(
         _wait(lambda: not rpc._rpc(handle, {"op": "status"}).get("attached"))
         events = [json.loads(row) for row in events_ndjson_path(WORKER_ID).read_text().splitlines()]
         assert [e["type"] for e in events if e["type"].startswith("attach_")] == [
-            "attach_opened", "attach_closed"]
+            "attach_opened", "attach_opened", "attach_closed", "attach_closed"]
         # An oversized/fragmented attach frame terminates only its viewer,
         # never the original host or Claude, and normal RPCs keep answering.
         overflow_sock, overflow_token = A.open_stream(handle, rows=26, cols=90, initial_output=bytearray())
