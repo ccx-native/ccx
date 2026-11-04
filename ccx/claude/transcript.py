@@ -1879,7 +1879,7 @@ def _iter_clean_turns(
             att = evt.get("attachment") or {}
             if att.get("type") != "queued_command":
                 continue
-            processed = _process_command_message(att.get("prompt") or "")
+            processed = _process_command_message(_block_text(att.get("prompt")))
             text = (processed or "").strip()
             if not text:
                 continue

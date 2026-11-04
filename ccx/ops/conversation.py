@@ -833,13 +833,40 @@ def _normalize_claude_events(
         if etype == "attachment":
             att = evt.get("attachment") or {}
             if att.get("type") == "queued_command":
-                text = (att.get("prompt") or "").strip()
-                if not text:
+                # A queued message is a string, or, when it carries an image
+                # or document, a content-block list like a user message's.
+                prompt = att.get("prompt")
+                media: list[dict] = []
+                others: list[dict] = []
+                if isinstance(prompt, list):
+                    parts = []
+                    for block in prompt:
+                        if isinstance(block, str):
+                            parts.append(block)
+                        elif not isinstance(block, dict):
+                            counters.omitted += 1
+                        elif block.get("type") == "text":
+                            parts.append(block.get("text") or "")
+                        elif block.get("type") in ("image", "document"):
+                            media.append(block)
+                        else:
+                            others.append(block)
+                    text = "\n".join(p for p in parts if p.strip()).strip()
+                else:
+                    text = prompt.strip() if isinstance(prompt, str) else ""
+                if not text and not media and not others:
                     continue
                 target = open_turn()
-                place(target, "input", _item(
-                    "user-text", "queued_command", evt.get("uuid"), text=text,
-                ))
+                if text:
+                    place(target, "input", _item(
+                        "user-text", "queued_command", evt.get("uuid"), text=text,
+                    ))
+                for block in media:
+                    place(target, "input", _claude_attachment(block))
+                for block in others:  # kept, as in a user message
+                    place(target, "output", _item(
+                        "other", block.get("type"), None, native=safe_native(block),
+                    ))
                 stamp(target, ts)
             else:
                 target = current or open_turn()

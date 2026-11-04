@@ -158,6 +158,36 @@ def test_claude_unmatched_tool_result_is_preserved_standalone():
     assert any("toolu_orphan" in w for w in doc["completeness"]["warnings"])
 
 
+def test_claude_queued_command_with_image_is_a_block_list(tmp_path):
+    # A message queued mid-turn that carries an image is persisted with
+    # `prompt` as a content-block list, not a string.
+    lines = CLAUDE_JSONL.read_text().splitlines()
+    queued = json.dumps({
+        "type": "attachment", "uuid": "atimg",
+        "timestamp": "2026-07-27T09:00:12.000Z",
+        "attachment": {"type": "queued_command", "prompt": [
+            {"type": "text", "text": "[Image #1] look at this"},
+            {"type": "image", "source": {
+                "type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo=",
+            }},
+            {"type": "future_block", "value": 1},
+        ]},
+    })
+    src = tmp_path / "queued-image.jsonl"
+    src.write_text("\n".join([*lines, queued]) + "\n")
+    doc = build_claude(src)
+    last = doc["turns"][-1]["input"]
+    assert [i["kind"] for i in last] == ["user-text", "attachment"]
+    assert last[0]["nativeType"] == "queued_command"
+    assert last[0]["text"] == "[Image #1] look at this"
+    assert last[1]["mediaType"] == "image/png"
+    assert "data" not in last[1]["native"]["source"]
+    # An unknown block is kept, as in a user message, not dropped.
+    other = doc["turns"][-1]["output"]
+    assert [(i["kind"], i["nativeType"]) for i in other] == [("other", "future_block")]
+    assert doc["completeness"]["omittedItemCount"] == 0
+
+
 def test_claude_duplicate_tool_result_is_preserved_not_dropped(tmp_path):
     lines = CLAUDE_JSONL.read_text().splitlines()
     duplicate = json.dumps({
