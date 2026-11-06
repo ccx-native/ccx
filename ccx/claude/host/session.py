@@ -2791,8 +2791,19 @@ def _run_host(args):
         state["active_cap"] = _merge_caps([state.get("active_cap"), slot.get("cap")])
         state["last_cap_poll"] = 0.0
         deadline = now + STEER_BOUNDARY_ACK_S
+        # Scan only what Claude wrote after the paste fence. The fence is a
+        # size of the worker's own transcript; any other file is scanned whole.
+        fence = slot.get("paste_offset")
+        try:
+            same_file = (transcript_path == rec["transcript"]
+                         or os.path.samefile(transcript_path, rec["transcript"]))
+        except OSError:
+            same_file = False
+        if not same_file or type(fence) is not int or fence < 0:
+            fence = 0
         while time.time() < deadline:
-            if queued_prompt_accepted(transcript_path, slot["text"], after_ms=before_ms):
+            if queued_prompt_accepted(transcript_path, slot["text"], after_ms=before_ms,
+                                      after_offset=fence):
                 reconcile_semantic_delivery()
                 return {"ok": True, "delivered": True,
                         "delivery_id": slot["delivery_id"]}

@@ -3138,3 +3138,17 @@ def test_refresh_starts_again_when_the_cursor_cannot_be_trusted(tmp_path, monkey
     assert starts == [0]
     assert (refreshed["context"], refreshed["observedModel"]) == _full_observation(native)
 
+
+def test_queued_prompt_accepted_reads_only_after_the_paste_fence(tmp_path):
+    p = tmp_path / "session.jsonl"
+    earlier = json.dumps({"type": "queue-operation", "operation": "enqueue",
+                          "timestamp": "2026-01-01T00:00:01Z", "content": "hello"}) + "\n"
+    later = json.dumps({"type": "queue-operation", "operation": "enqueue",
+                        "timestamp": "2026-01-01T00:00:03Z", "content": "hello"}) + "\n"
+    p.write_text(earlier)
+    fence = p.stat().st_size
+    # An identical enqueue from before this paste is not its acknowledgement.
+    assert not T.queued_prompt_accepted(p, "hello", after_offset=fence)
+    with p.open("a") as out:
+        out.write(later)
+    assert T.queued_prompt_accepted(p, "hello", after_offset=fence)

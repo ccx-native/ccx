@@ -193,6 +193,7 @@ def queued_prompt_accepted(
     text: str,
     *,
     after_ms: int = 0,
+    after_offset: int = 0,
 ) -> bool:
     """Return True once Claude has natively accepted a queued prompt.
 
@@ -202,14 +203,16 @@ def queued_prompt_accepted(
     PostToolUse/SubagentStop steering paste was actually accepted, not merely
     written to the PTY.
 
-    Only the exact normalized prompt acknowledges this delivery.
+    Only the exact normalized prompt acknowledges this delivery. Callers pass
+    the transcript size from before the paste as ``after_offset``: this is
+    polled while a hook holds the turn, so it must not rescan a long history.
     """
     # Claude trims a submitted prompt; an inline paste has no envelope that
     # would keep the surrounding whitespace.
     text = normalize_semantic_prompt_text(text).strip()
     if not text:
         return False
-    for evt in _iter_transcript(transcript_path):
+    for evt in _iter_transcript(transcript_path, after_offset=after_offset):
         if evt.get("type") != "queue-operation":
             continue
         if evt.get("operation") != "enqueue":

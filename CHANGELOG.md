@@ -10,6 +10,8 @@ All notable changes to ccx are documented here. The format follows
 - Claude hosts no longer re-read a worker's whole transcript after every turn.
   Context and model readings update from what Claude wrote since the last
   reading, so long-lived workers stay fast and use little memory.
+- Steering a busy Claude worker no longer rescans its whole transcript while
+  waiting for Claude to accept the message.
 
 ### Removed
 
