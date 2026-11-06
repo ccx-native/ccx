@@ -623,3 +623,58 @@ def test_public_capped_worker_and_python_strict_send_same_original_receipt(hoste
     assert rejected.returncode != 0
     assert cd.read_receipt(handle, "cli-invalid-budget") is None
     assert native.read_bytes().count(b"worker strict quota") == 1
+
+
+def test_interrupt_refusal_only_while_text_may_be_in_claude():
+    from ccx.claude.host.session import _interrupt_refusal_for_delivery as refusal
+    assert refusal(None) is None
+    held = {"delivery_id": "d", "route": "steer", "phase": "steer_boundary",
+            "maybe_written": False}
+    assert refusal(held) is None  # CCX still holds it: Escape cannot lose it
+    assert refusal({**held, "route": "new_turn", "phase": "new_turn"}) is None
+    assert "retry in a few seconds" in refusal({**held, "maybe_written": True})
+    assert "retry in a few seconds" in refusal(
+        {**held, "route": "new_turn", "maybe_written": True})
+    assert "reconcile" in refusal({"delivery_id": None})
+
+
+@pytest.fixture
+def interruptible(short_root, tmp_path, monkeypatch):
+    """Like `hosted`, but the fake writes Claude's interrupt marker on Escape."""
+    from ccx.claude import usage as account_usage
+    monkeypatch.setattr(account_usage, "fetch_usage", lambda **kw: None)
+    launches = _deadline_fake_claude(short_root, tmp_path, monkeypatch)
+    input_log = tmp_path / "native-steer-pty.log"
+    monkeypatch.setenv("FAKE_LOG", str(input_log))
+    monkeypatch.setenv("FAKE_MODE", "nostop,manual_interrupt_marker")
+    monkeypatch.setenv("FAKE_HOOKS_VIA_SETTINGS", "1")
+    monkeypatch.setenv("FAKE_HOOK_RESULT_LOG", str(tmp_path / "native-hook-ack.jsonl"))
+    store = require_ccx_active(short_root)
+    try:
+        _first_wait_original_claude_ready(tmp_path, A)
+        yield f"claude:{A}", store, input_log, launches
+    finally:
+        _stop_disposable_original(short_root)
+
+
+def test_interrupt_with_held_steer_stops_turn_and_steer_runs_next(interruptible):
+    handle, store, input_log, launches = interruptible
+    ref = _original_busy(handle)
+    submitted = send_turn(handle, "steer held through stop", delivery_id="held-steer",
+                          mode="steer_only")
+    assert submitted["delivery"]["status"] == "pending"
+    assert cd.read_receipt(handle, "held-steer")["maybeWritten"] is False
+    assert b"steer held through stop" not in input_log.read_bytes()
+
+    from ccx.ops.cancel import stop_worker
+    stopped = stop_worker(handle, timeout=8)
+    assert stopped["accepted"] is True and stopped["turn_ref"] == ref, stopped
+    eventually(lambda: store.record(handle).get("lastSettledTurn") or {},
+               lambda v: v.get("turnRef") == ref and v.get("outcome") == "interrupted")
+    # The held steer goes out once, as the next turn.
+    receipt = eventually(lambda: cd.read_receipt(handle, "held-steer"),
+                         lambda r: r["state"] in {"accepted", "delivered"})
+    assert receipt["placement"] == "new_turn"
+    assert reconcile_turn(handle, delivery_id="held-steer")["status"] in {"accepted", "settled"}
+    assert input_log.read_bytes().count(b"steer held through stop") == 1
+    assert launches.read_text().splitlines() == ["provider-start"]

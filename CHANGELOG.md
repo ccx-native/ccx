@@ -13,6 +13,12 @@ All notable changes to ccx are documented here. The format follows
 - Steering a busy Claude worker no longer rescans its whole transcript while
   waiting for Claude to accept the message.
 
+### Fixed
+
+- `ccx stop` on a Claude worker no longer refuses while a steer is waiting
+  for the next tool boundary. The turn stops and the steer runs as the next
+  turn. It still asks you to retry while a message is being handed to Claude.
+
 ### Removed
 
 - The per-worker `transcript.json` file and the worker record's

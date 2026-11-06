@@ -250,6 +250,27 @@ def adopt_ai_title(short: str, transcript_path) -> bool | None:
     return True
 
 
+def _interrupt_refusal_for_delivery(slot: dict | None) -> str | None:
+    """Why an interrupt must wait for the in-flight delivery, or None.
+
+    A delivery CCX still holds (nothing written to the PTY yet) is unaffected
+    by Escape: once the turn ends, a held steer falls back to the next turn
+    and a held send goes out when the worker is idle. Only text that may
+    already be in Claude's editor or queue makes Escape ambiguous, and that
+    window lasts seconds.
+    """
+    if slot is None:
+        return None
+    if not slot.get("delivery_id"):
+        return ("An earlier message is unresolved; inspect the worker and "
+                "reconcile its delivery before interrupting.")
+    if not slot.get("maybe_written"):
+        return None
+    if slot.get("route") == "steer":
+        return "a steer is being handed to Claude; retry in a few seconds"
+    return "a message is being handed to Claude; retry in a few seconds"
+
+
 def _semantic_slot_from_receipt(receipt: dict, hot: dict | None = None) -> dict:
     """Recover the original immutable cap even if the hot journal was evicted."""
     hot = hot or {}
@@ -2760,6 +2781,13 @@ def _run_host(args):
             return None
         if slot.get("maybe_written"):
             return {"ok": True, "delivered": False, "pending": True}
+        interrupting = state.get("interrupt_observation") or {}
+        if (interrupting.get("turn_ref") == target and interrupting.get("passive") is False
+                and interrupting.get("interrupt_at") is not None):
+            # CCX sent Escape to this turn: keep the steer for the next turn
+            # rather than queueing it into a turn that is stopping.
+            return {"ok": True, "delivered": False, "pending": True,
+                    "reason": "target turn is being interrupted"}
 
         transcript_path = data.get("transcript_path")
         if not transcript_path:
@@ -4028,16 +4056,12 @@ def _run_host(args):
                     "state": state["current"], "turnRef": current_ref,
                 }) + "\n").encode())
                 return
-            if state.get("semantic_delivery") is not None:
+            refusal = _interrupt_refusal_for_delivery(state.get("semantic_delivery"))
+            if refusal is not None:
                 client_sock.sendall((json.dumps({
                     "ok": False,
                     "definitive": True,
-                    "error": (
-                        "queued steer is still pending; ccx kill <worker> discards "
-                        "the queue after checking the transcript (delivered or abandoned)"
-                        if (state["semantic_delivery"] or {}).get("route") == "steer"
-                        else "semantic delivery in flight; retry after it settles"
-                    ),
+                    "error": refusal,
                     "state": state["current"],
                 }) + "\n").encode())
                 return
