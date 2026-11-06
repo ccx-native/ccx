@@ -82,9 +82,7 @@ from ccx.ops.semantics import (
     question_answer_map,
     question_answer_message,
 )
-from ccx.claude.transcript import (
-    render_transcript_json,
-)
+from ccx.claude.transcript import render_transcript
 from .types import (
     ClaudeContext,
     ClaudeTask,
@@ -1659,7 +1657,7 @@ class CcxClient:
                     with source[0].open_reader() as stream:
                         result = stream.read().decode("utf-8", "replace")
             else:
-                result = render_transcript_json(owner.worker, store=self._uuid_store)
+                result = render_transcript(owner.worker, store=self._uuid_store)
                 if result is None:
                     raise SessionNotFound(
                         f"transcript not found for {owner.worker}", short=owner.short,

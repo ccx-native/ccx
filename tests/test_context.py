@@ -342,7 +342,7 @@ def test_typed_claude_context_observation_parity(tmp_path, monkeypatch):
         },
     }) + "\n")
     owner, _rendered, _record = _render_owned_source(tmp_path, monkeypatch, native)
-    transcript_mod.render_transcript_json(owner)  # producer/setup only
+    transcript_mod.refresh_context_observation(owner)  # producer/setup only
     root = constants.CCX_ROOT
     add_worker(root, B, "claude")  # same eight-character prefix, no observation
     before = _worker_summaries_file_snapshot(root)
@@ -350,7 +350,7 @@ def test_typed_claude_context_observation_parity(tmp_path, monkeypatch):
     def forbidden(*_args, **_kwargs):
         pytest.fail("typed context must not render, contact host or run provider")
 
-    monkeypatch.setattr(claude_mod, "render_transcript_json", forbidden)
+    monkeypatch.setattr(claude_mod, "render_transcript", forbidden)
     monkeypatch.setattr(claude_mod, "_rpc", forbidden)
     client, workers = CcxClient(), WorkerClient()
     for worker_id, tokens in ((owner, 1234), (B, None)):
@@ -418,7 +418,7 @@ def test_typed_context_full_uuid_preflight_and_no_effects(active_api_root, monke
     def forbidden(*_args, **_kwargs):
         pytest.fail("refused or recorded-only context must not use native routes")
 
-    monkeypatch.setattr(claude_mod, "render_transcript_json", forbidden)
+    monkeypatch.setattr(claude_mod, "render_transcript", forbidden)
     monkeypatch.setattr(claude_mod, "_rpc", forbidden)
     monkeypatch.setattr(codex_mod, "record", forbidden)
     monkeypatch.setattr(codex_mod, "rpc", forbidden)
@@ -461,7 +461,7 @@ def test_typed_claude_context_fails_closed_on_foreign_observation(tmp_path, monk
         },
     }) + "\n")
     owner, _rendered, _record = _render_owned_source(tmp_path, monkeypatch, native)
-    transcript_mod.render_transcript_json(owner)
+    transcript_mod.refresh_context_observation(owner)
     root = constants.CCX_ROOT
     store = require_ccx_active(root)
     sidecar = store.worker_path(owner, "context-observation.json")

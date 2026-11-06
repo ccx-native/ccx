@@ -129,7 +129,7 @@ from ccx.claude.transcript import (
     prompt_matches,
     queued_prompt_accepted,
     read_ai_title,
-    render_transcript_json,
+    refresh_context_observation,
 )
 from ccx.claude.usage import _merge_caps, cap_tripped, fetch_usage, read_usage_cached, unknown_cap_metrics
 from ccx.claude.host.events import _count_lines, _elicitation_request, _hook_tool_use_id, _oldest_native_gate, _open_event_journal, _permission_preview, _rotate_events_file, _stamp_event, _subagent_finished_event, _tool_finished_event, _tool_started_event
@@ -3972,7 +3972,6 @@ def _run_host(args):
                 "turns": state["turns"],
                 "activeTurnRef": state.get("active_turn_ref"),
                 "lastTurnAt": r.get("lastTurnAt"),
-                "transcript": r.get("transcriptJson"),
                 "pendingDeliveries": pending_steers,
                 "steerJournalError": steer_journal_error,
                 "waitingFor": current_waiting_preview(),
@@ -4397,7 +4396,7 @@ def _run_host(args):
     threading.Thread(target=_usage_refresher, name="ccx-usage-refresh",
                      daemon=True).start()
 
-    # Keep whole-history transcript rendering off the host's event loop.
+    # Keep the context/model observation refresh off the host's event loop.
     refresh_wanted = threading.Event()
     refresh_stop = threading.Event()
 
@@ -4409,7 +4408,7 @@ def _run_host(args):
             refresh_wanted.wait()
             refresh_wanted.clear()
             try:
-                render_transcript_json(short)
+                refresh_context_observation(short)
             except Exception:
                 pass
             if refresh_stop.is_set() and not refresh_wanted.is_set():

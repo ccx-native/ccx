@@ -243,7 +243,7 @@ def test_compact_public_acceptance_then_original_manual_boundary(
     generated_hook_host, monkeypatch,
 ):
     from ccx.store import paths
-    from ccx.claude.transcript import render_transcript_json
+    from ccx.claude.transcript import refresh_context_observation
 
     store, _call, env, _hooks = generated_hook_host
     monkeypatch.setattr(paths, "CLAUDE_HOME", Path(env["CLAUDE_CONFIG_DIR"]))
@@ -277,7 +277,7 @@ def test_compact_public_acceptance_then_original_manual_boundary(
         client.compact(A, operation_id=op, timeout=.5)
     assert store.record(A)["stats"]["turns"] == turns_before
 
-    render_transcript_json(A)
+    refresh_context_observation(A)
     context = client.context(A)
     assert context.reason == "just_compacted" and context.tokens_used is None
 

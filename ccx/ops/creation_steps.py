@@ -378,10 +378,6 @@ def prepare_worker(
         if engine == "claude":
             from ccx.store.paths import transcript_path_for
             record["transcript"] = str(transcript_path_for(directory, session_id))
-            record["transcriptJson"] = str(
-                store.pointer.generation_root / "workers" /
-                "claude" / chosen / "transcript.json"
-            )
         else:
             record.update(
                 nativeArchive={"state": "active", "attempts": 0},

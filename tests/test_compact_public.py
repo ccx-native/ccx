@@ -16,7 +16,7 @@ from ccx import WorkerClient
 from ccx.store import paths
 from ccx.errors import CompactIndeterminate, SessionUnavailable
 from ccx.store.root import NativeActionDenied
-from ccx.claude.transcript import render_transcript_json
+from ccx.claude.transcript import refresh_context_observation
 from ccx.store.worker_state import normalize_native_state
 from test_generation_store import A, B, add_worker, short_root
 from test_compact_claude import (
@@ -31,7 +31,7 @@ def test_worker_client_compact_preserves_recorded_before_and_proven_boundary(
     store, _call, env, _hooks = generated_hook_host
     monkeypatch.setattr(paths, "CLAUDE_HOME", Path(env["CLAUDE_CONFIG_DIR"]))
     source = _original_native_source(store)
-    render_transcript_json(A)
+    refresh_context_observation(A)
 
     worker = WorkerClient()
     before = worker.context(f"claude:{A}")

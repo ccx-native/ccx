@@ -1666,7 +1666,7 @@ def test_pending_question_answered_returns_none(tmp_path):
     assert T.pending_ask_user_question(p) is None
 
 
-# --- render_transcript_json --------------------------------------------------
+# --- render_transcript / refresh_context_observation --------------------------
 
 
 def _render_owned_source(tmp_path, monkeypatch, source, *, worker_id=None):
@@ -1702,21 +1702,19 @@ def _render_owned_source(tmp_path, monkeypatch, source, *, worker_id=None):
     native_jsonl = source.read_bytes()
     expected.write_bytes(native_jsonl + (b"\n" if native_jsonl and not native_jsonl.endswith(b"\n") else b""))
     expected.chmod(0o600)
-    return owner_id, store.worker_path(prepared.worker, "transcript.json"), rec
+    return owner_id, store.worker_path(prepared.worker, "context-observation.json"), rec
 
 
 
-def test_render_transcript_json_atomic_write(tmp_path, monkeypatch):
-    """render writes valid JSON of the expected shape and leaves no tmp file
-    behind (the write goes through a tmp sibling + os.replace)."""
+def test_render_transcript_shape_and_writes_nothing(tmp_path, monkeypatch):
+    """render returns the cleaned document and publishes no file."""
     src = _write_jsonl(tmp_path, [
         {"type": "user", "message": {"content": "hello"}},
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "hi"}]}},
     ])
     owner_id, dst, rec = _render_owned_source(tmp_path, monkeypatch, src)
-    T.render_transcript_json(owner_id)
+    out = T.render_transcript(owner_id)
 
-    out = json.loads(dst.read_text())
     # Contract metadata: a small integer schema version and a render timestamp.
     assert out["schemaVersion"] == T.TRANSCRIPT_SCHEMA_VERSION
     assert isinstance(out["schemaVersion"], int)
@@ -1730,12 +1728,10 @@ def test_render_transcript_json_atomic_write(tmp_path, monkeypatch):
     assert [t["role"] for t in out["turns"]] == ["user", "assistant"]
     # Lossy-cleaning stats are always present and zeroed for a clean transcript.
     assert out["stats"] == {"malformedLines": 0, "truncatedToolResults": 0}
-    # No leftover tmp sibling from the atomic write
-    assert not dst.with_suffix(".json.tmp").exists()
-    assert list(tmp_path.glob("*.tmp")) == []
+    assert not dst.exists() and not list(dst.parent.glob("*.json.new-*"))
 
 
-def test_render_transcript_json_embeds_context_usage(tmp_path, monkeypatch):
+def test_render_transcript_embeds_context_usage(tmp_path, monkeypatch):
     """The rendered transcript carries the latest input footprint."""
     src = _write_jsonl(tmp_path, [
         {"type": "user", "message": {"content": "hello"}},
@@ -1747,9 +1743,7 @@ def test_render_transcript_json_embeds_context_usage(tmp_path, monkeypatch):
         }},
     ])
     owner_id, dst, rec = _render_owned_source(tmp_path, monkeypatch, src)
-    T.render_transcript_json(owner_id)
-
-    ctx = json.loads(dst.read_text())["context"]
+    ctx = T.render_transcript(owner_id)["context"]
     assert ctx == {
         "state": "known", "tokens_used": 350000,
         "as_of_turn_ref": None, "as_of_ms": None,
@@ -1757,7 +1751,7 @@ def test_render_transcript_json_embeds_context_usage(tmp_path, monkeypatch):
 
 
 
-def test_render_transcript_json_fences_usage_after_compact(tmp_path, monkeypatch):
+def test_render_transcript_fences_usage_after_compact(tmp_path, monkeypatch):
     src = _write_jsonl(tmp_path, [
         {"type": "assistant", "message": {
             "content": [{"type": "text", "text": "before"}],
@@ -1771,9 +1765,7 @@ def test_render_transcript_json_fences_usage_after_compact(tmp_path, monkeypatch
          "timestamp": "2026-06-19T12:00:01Z"},
     ])
     owner_id, dst, rec = _render_owned_source(tmp_path, monkeypatch, src)
-    T.render_transcript_json(owner_id)
-
-    assert json.loads(dst.read_text())["context"] == {
+    assert T.render_transcript(owner_id)["context"] == {
         "state": "unknown",
         "tokens_used": None,
         "reason": "just_compacted",
@@ -1782,7 +1774,7 @@ def test_render_transcript_json_fences_usage_after_compact(tmp_path, monkeypatch
     }
 
 
-def test_render_transcript_json_fences_usage_while_compacting(tmp_path, monkeypatch):
+def test_render_transcript_fences_usage_while_compacting(tmp_path, monkeypatch):
     src = _write_jsonl(tmp_path, [
         {"type": "assistant", "message": {
             "content": [{"type": "text", "text": "before"}],
@@ -1794,9 +1786,7 @@ def test_render_transcript_json_fences_usage_while_compacting(tmp_path, monkeypa
         }, "timestamp": "2026-06-19T12:00:01Z"},
     ])
     owner_id, dst, rec = _render_owned_source(tmp_path, monkeypatch, src)
-    T.render_transcript_json(owner_id)
-
-    assert json.loads(dst.read_text())["context"] == {
+    assert T.render_transcript(owner_id)["context"] == {
         "state": "unknown",
         "tokens_used": None,
         "reason": "compacting",
@@ -1805,7 +1795,7 @@ def test_render_transcript_json_fences_usage_while_compacting(tmp_path, monkeypa
     }
 
 
-def test_render_transcript_json_surfaces_lossy_stats(tmp_path, monkeypatch):
+def test_render_transcript_surfaces_lossy_stats(tmp_path, monkeypatch):
     big = "y" * (T._TOOL_RESULT_TRUNC_JSON + 1)
     src = tmp_path / "transcript.jsonl"
     src.write_text(
@@ -1819,14 +1809,13 @@ def test_render_transcript_json_surfaces_lossy_stats(tmp_path, monkeypatch):
         ]}}) + "\n"
     )
     owner_id, dst, rec = _render_owned_source(tmp_path, monkeypatch, src)
-    T.render_transcript_json(owner_id)
-
-    out = json.loads(dst.read_text())
+    out = T.render_transcript(owner_id)
     assert out["stats"]["malformedLines"] == 1
     assert out["stats"]["truncatedToolResults"] == 1
 
 
-def test_render_transcript_json_unknown_full_uuid_fails_without_creating_files(tmp_path, monkeypatch):
+@pytest.mark.parametrize("produce", ["render_transcript", "refresh_context_observation"])
+def test_render_unknown_full_uuid_fails_without_creating_files(tmp_path, monkeypatch, produce):
     from test_generation_store import A, fixture_root
     from ccx import constants
     from ccx.store.root import require_ccx_active
@@ -1835,7 +1824,7 @@ def test_render_transcript_json_unknown_full_uuid_fails_without_creating_files(t
     root = fixture_root(tmp_path)
     monkeypatch.setattr(constants, "CCX_ROOT", root)
     with pytest.raises(UnknownWorker):
-        T.render_transcript_json(A)
+        getattr(T, produce)(A)
     assert require_ccx_active(root).list_workers() == []
     assert not (root / "identity" / "generations" / ("g-" + "1" * 32) / "workers").exists()
 
@@ -2313,7 +2302,7 @@ def test_read_ai_title_ignores_sidechain_title(tmp_path):
 
 # V2 producer proofs: no arbitrary legacy record path read/write, no crossing
 # workers with identical display prefix, and no native provider invocation.
-def test_v2_render_source_original_native_owner_and_private_atomic_file(tmp_path, monkeypatch):
+def test_v2_observation_source_original_native_owner_and_private_atomic_file(tmp_path, monkeypatch):
     from ccx import constants
     from ccx.store.root import require_ccx_active
     from test_generation_store import A
@@ -2342,25 +2331,19 @@ def test_v2_render_source_original_native_owner_and_private_atomic_file(tmp_path
 
     with monkeypatch.context() as patch:
         patch.setattr(uuid_store_mod.os, "open", prove_temp_is_private)
-        T.render_transcript_json(owner)
-    assert len(called) == 2  # observation and full transcript, both private
+        observed = T.refresh_context_observation(owner)
+    assert len(called) == 1  # only the observation, private
     assert stat.S_IMODE(dst.stat().st_mode) == 0o600
     assert not list(dst.parent.glob(".new-*"))
-    rendered = json.loads(dst.read_text())
-    assert rendered["schemaVersion"] == 2
-    assert rendered["generatedAt"] > 0
-    assert rendered["worker"] == f"claude:{A}"
-    assert rendered["sessionId"] == rec["native"]["sessionId"]
-    assert rendered["sessionId"] != A
-    assert rendered["transcriptJsonl"] == rec["transcript"]
-    assert rendered["context"]["state"] == "known"
-    assert rendered["context"]["tokens_used"] == 200
-    assert [turn["role"] for turn in rendered["turns"]] == ["user", "assistant"]
-    assert rendered["turns"][-1]["model"] == "claude-opus-production-evidence"
+    assert observed["workerId"] == A
+    assert observed["nativeSessionId"] == rec["native"]["sessionId"] != A
+    assert observed["context"]["state"] == "known"
+    assert observed["context"]["tokens_used"] == 200
+    assert observed["observedModel"] == "claude-opus-production-evidence"
     # The existing nofollow descriptor-based store reader recognizes this
     # producer output without another path-based open or 0o644 exposure.
     store = require_ccx_active(constants.CCX_ROOT)
-    assert store.read_worker_sidecar(A, "transcript.json") == rendered
+    assert store.read_worker_sidecar(A, "context-observation.json") == observed
 
 
 def test_v2_render_ignores_untrusted_destination_record_field(tmp_path, monkeypatch):
@@ -2375,14 +2358,14 @@ def test_v2_render_ignores_untrusted_destination_record_field(tmp_path, monkeypa
 
     def poisoned_display_path(self, target):
         result = original_record(self, target)
-        result["transcriptJson"] = str(outsider)
+        result["contextObservation"] = str(outsider)
         return result
 
     with monkeypatch.context() as patched:
         patched.setattr(GenerationStore, "record", poisoned_display_path)
-        T.render_transcript_json(owner)
+        T.refresh_context_observation(owner)
     assert json.loads(outsider.read_text()) == {"private": "other-worker"}
-    assert json.loads(dst.read_text())["worker"] == f"claude:{owner}"
+    assert json.loads(dst.read_text())["workerId"] == owner
     assert dst != outsider
 
 
@@ -2403,10 +2386,10 @@ def test_v2_render_mismatched_native_record_path_refuses_before_jsonl_read(tmp_p
 
     with monkeypatch.context() as patched:
         patched.setattr(GenerationStore, "record", switched_source)
-        patched.setattr(T, "_iter_clean_turns", lambda *_a, **_k:
+        patched.setattr(T, "_iter_transcript", lambda *_a, **_k:
                         pytest.fail("source mismatch must refuse before native parse"))
         with pytest.raises(StorageIntegrityError, match="original native project JSONL"):
-            T.render_transcript_json(owner)
+            T.refresh_context_observation(owner)
     assert not dst.exists() and foreign.exists()
 
 
@@ -2417,7 +2400,7 @@ def test_v2_render_refuses_unsafe_native_source_before_publish(tmp_path, monkeyp
 
     source = _write_jsonl(tmp_path, [{"type": "user", "message": {"content": "good"}}])
     owner, dst, rec = _render_owned_source(tmp_path, monkeypatch, source)
-    T.render_transcript_json(owner)
+    T.refresh_context_observation(owner)
     before = dst.read_bytes()
     native = Path(rec["transcript"])
     native.unlink()
@@ -2426,7 +2409,7 @@ def test_v2_render_refuses_unsafe_native_source_before_publish(tmp_path, monkeyp
     else:
         os.mkfifo(native, mode=0o600)
     with pytest.raises(StorageIntegrityError, match="native transcript"):
-        T.render_transcript_json(owner)
+        T.refresh_context_observation(owner)
     assert dst.read_bytes() == before
 
 
@@ -2444,7 +2427,7 @@ def test_v2_render_refuses_unsafe_existing_destination(tmp_path, monkeypatch, ta
         dst.write_text("not private")
         dst.chmod(0o644)
     with pytest.raises(StorageIntegrityError, match="unsafe owned JSON target"):
-        T.render_transcript_json(owner)
+        T.refresh_context_observation(owner)
     assert outsider.read_text() == "not owned"
     assert not list(dst.parent.glob(".new-*"))
 
@@ -2456,20 +2439,20 @@ def test_v2_render_stale_generation_cannot_publish_into_old_worker(tmp_path, mon
 
     src = _write_jsonl(tmp_path, [{"type": "user", "message": {"content": "task"}}])
     owner, dst, _rec = _render_owned_source(tmp_path, monkeypatch, src)
-    original_cleaner = T._iter_clean_turns
+    original_reader = T._iter_transcript
     rotated = []
 
     def rotate_after_pinned_read(*args, **kwargs):
-        turns = list(original_cleaner(*args, **kwargs))
+        turns = list(original_reader(*args, **kwargs))
         if not rotated:
             rotated.append(True)
             switch_pointer(constants.CCX_ROOT)
         yield from turns
 
     with monkeypatch.context() as patched:
-        patched.setattr(T, "_iter_clean_turns", rotate_after_pinned_read)
+        patched.setattr(T, "_iter_transcript", rotate_after_pinned_read)
         with pytest.raises(StaleGeneration):
-            T.render_transcript_json(owner)
+            T.refresh_context_observation(owner)
     assert rotated and not dst.exists()
 
 
@@ -2485,8 +2468,8 @@ def test_v2_render_missing_original_native_jsonl_creates_no_empty_render(tmp_pat
     monkeypatch.setattr(paths, "CLAUDE_HOME", tmp_path / "not-yet-used-provider-home")
     store = require_ccx_active(root)
     prepare_worker(store, engine="claude", cwd=str(tmp_path), worker_id=A)
-    out = store.worker_path(A, "transcript.json")
-    T.render_transcript_json(A)
+    out = store.worker_path(A, "context-observation.json")
+    assert T.refresh_context_observation(A) is None and T.render_transcript(A) is None
     assert not out.exists()
     assert store.record(A)["stats"]["turns"] == 0
 
@@ -2506,7 +2489,7 @@ def test_v2_render_refuses_original_owner_claim_native_binding_mismatch(tmp_path
     # A changed owner intent cannot be accepted as if it still named the
     # original native session present in the immutable worker record.
     with pytest.raises(StorageIntegrityError, match="original native binding"):
-        T.render_transcript_json(owner)
+        T.refresh_context_observation(owner)
     assert not dst.exists() and rec["native"]["sessionId"] != owner
 
 
@@ -2523,7 +2506,7 @@ def test_v2_render_refuses_symlink_native_project_directory(tmp_path, monkeypatc
     original_source.parent.rmdir()
     original_source.parent.symlink_to(outside, target_is_directory=True)
     with pytest.raises(StorageIntegrityError, match="unsafe Claude native transcript source"):
-        T.render_transcript_json(owner)
+        T.refresh_context_observation(owner)
     assert not dst.exists() and replacement.exists()
 
 
@@ -2534,10 +2517,10 @@ def test_v2_render_native_jsonl_replaced_during_parse_cannot_publish_stale_sourc
 
     src = _write_jsonl(tmp_path, [{"type": "user", "message": {"content": "first"}}])
     owner, dst, rec = _render_owned_source(tmp_path, monkeypatch, src)
-    original_cleaner = T._iter_clean_turns
+    original_reader = T._iter_transcript
 
     def replace_after_pinned_read(*args, **kwargs):
-        rows = list(original_cleaner(*args, **kwargs))
+        rows = list(original_reader(*args, **kwargs))
         real_source = Path(rec["transcript"])
         replacement = real_source.with_suffix(".replacement.jsonl")
         replacement.write_text(json.dumps({
@@ -2548,9 +2531,9 @@ def test_v2_render_native_jsonl_replaced_during_parse_cannot_publish_stale_sourc
         yield from rows
 
     with monkeypatch.context() as patch:
-        patch.setattr(T, "_iter_clean_turns", replace_after_pinned_read)
+        patch.setattr(T, "_iter_transcript", replace_after_pinned_read)
         with pytest.raises(StorageIntegrityError, match="changed identity"):
-            T.render_transcript_json(owner)
+            T.refresh_context_observation(owner)
     assert not dst.exists()
 
 
@@ -2603,13 +2586,13 @@ def test_r1_private_primary_group_0775_source_dirs_render(
              "project": native.parent}
     for name, directory in parts.items():
         directory.chmod(0o775 if name in group_writable_parts else 0o700)
-    T.render_transcript_json(owner)
-    rendered = require_ccx_active(constants.CCX_ROOT).read_worker_sidecar(
-        owner, "transcript.json",
+    T.refresh_context_observation(owner)
+    observed = require_ccx_active(constants.CCX_ROOT).read_worker_sidecar(
+        owner, "context-observation.json",
     )
-    assert rendered["worker"] == f"claude:{owner}" and rendered["sessionId"] == record["native"]["sessionId"]
-    assert rendered["turns"][-1]["model"] == "model-from-original-provider"
-    assert rendered["context"]["tokens_used"] == 1200
+    assert observed["workerId"] == owner and observed["nativeSessionId"] == record["native"]["sessionId"]
+    assert observed["observedModel"] == "model-from-original-provider"
+    assert observed["context"]["tokens_used"] == 1200
     assert stat.S_IMODE(dst.stat().st_mode) == 0o600
     assert all(stat.S_IMODE(directory.stat().st_mode) ==
                (0o775 if name in group_writable_parts else 0o700)
@@ -2643,7 +2626,7 @@ def test_r1_group_write_refuses_unproven_or_shared_group(
         monkeypatch.setattr(pwd, "getpwall", lambda: (_ for _ in ()).throw(OSError("NSS unavailable")))
     paths.CLAUDE_HOME.chmod(0o775)
     with pytest.raises(StorageIntegrityError, match="unsafe native Claude source directory"):
-        T.render_transcript_json(owner)
+        T.refresh_context_observation(owner)
     assert not dst.exists()
 
 
@@ -2662,7 +2645,7 @@ def test_r1_world_writable_provider_directory_stays_refused(
                  "project": Path(record["transcript"]).parent}[component]
     directory.chmod(0o777)
     with pytest.raises(StorageIntegrityError, match="unsafe native Claude source directory"):
-        T.render_transcript_json(owner)
+        T.refresh_context_observation(owner)
     assert not dst.exists()
 
 
@@ -2701,13 +2684,7 @@ def test_r2_original_native_surrogate_and_real_emoji_round_trip_without_metadata
     original = source.read_bytes()
     assert b"\\ud83d" in original and b"\\ud83d\\ude80" in original
     owner, dst, record = _render_owned_source(tmp_path, monkeypatch, source)
-    T.render_transcript_json(owner)
-    output = dst.read_bytes()
-    assert b"\\ud83d" in output
-    assert b"\\ud83d\\ude80" in output
-    assert b"caf\\u00e9" in output
-    assert stat.S_IMODE(dst.stat().st_mode) == 0o600
-    restored = json.loads(output)
+    restored = T.render_transcript(owner)
     assert restored["turns"][-1]["text"] == broken_pair + " + " + emoji
     assert restored["sessionId"] == record["native"]["sessionId"]
     assert restored["context"]["tokens_used"] == 123
@@ -2747,10 +2724,10 @@ def test_v2_context_observation_one_completed_prefix_and_compaction(tmp_path, mo
     with native.open("ab") as out:
         out.write(boundary)  # Valid JSON but not yet LF-terminated.
     original_complete_size = native.stat().st_size - len(boundary)
-    T.render_transcript_json(worker_id)
+    T.refresh_context_observation(worker_id)
     store = require_ccx_active(constants.CCX_ROOT)
     first = store.read_worker_sidecar(worker_id, "context-observation.json")
-    first_render = json.loads(rendered.read_text())
+    first_render = T.render_transcript(worker_id)
     assert first["source"]["endOffset"] == original_complete_size
     assert first["context"]["state"] == "unknown"
     assert first["context"]["reason"] == "compacting"
@@ -2758,7 +2735,7 @@ def test_v2_context_observation_one_completed_prefix_and_compaction(tmp_path, mo
     assert first_render["stats"]["malformedLines"] == 0
     with native.open("ab") as out:
         out.write(b"\n")
-    T.render_transcript_json(worker_id)
+    T.refresh_context_observation(worker_id)
     second = store.read_worker_sidecar(worker_id, "context-observation.json")
     assert second["source"]["endOffset"] == native.stat().st_size
     assert second["context"]["state"] == "unknown"
@@ -2779,7 +2756,7 @@ def test_v2_context_observation_current_truncated_source_can_refresh(tmp_path, m
     }])
     owner, _rendered, rec = _render_owned_source(tmp_path, monkeypatch, src)
     store = require_ccx_active(constants.CCX_ROOT)
-    T.render_transcript_json(owner)
+    T.refresh_context_observation(owner)
     before = store.read_worker_sidecar(owner, "context-observation.json")
     native = Path(rec["transcript"])
     # 'w' truncates the same inode; the new source is still exactly owned.
@@ -2789,7 +2766,7 @@ def test_v2_context_observation_current_truncated_source_can_refresh(tmp_path, m
             "usage": {"input_tokens": 37, "output_tokens": 3},
         },
     }) + "\n")
-    T.render_transcript_json(owner)
+    T.refresh_context_observation(owner)
     after = store.read_worker_sidecar(owner, "context-observation.json")
     assert after["source"]["ino"] == before["source"]["ino"]
     assert after["source"]["endOffset"] < before["source"]["endOffset"]
@@ -2812,7 +2789,7 @@ def test_v2_context_observation_ignores_synthetic_model_and_zero_usage(tmp_path,
         }},
     ])
     owner, _dst, _rec = _render_owned_source(tmp_path, monkeypatch, source)
-    T.render_transcript_json(owner)
+    T.refresh_context_observation(owner)
     observed = require_ccx_active(constants.CCX_ROOT).read_worker_sidecar(
         owner, "context-observation.json",
     )
@@ -2973,3 +2950,191 @@ def test_monitor_estimated_deadline_does_not_stop_without_transcript_evidence(tm
         ts="2026-01-01T00:00:08Z")
     reducer.feed(done)
     assert reducer.tasks()[0]["status"] == "completed"
+
+
+# --- incremental context observation ------------------------------------------
+
+def _ts(second):
+    return f"2026-06-19T12:00:{second:02d}Z"
+
+
+def _observation_events():
+    """Every shape the context/model/pending-compact facts depend on."""
+    def assistant(mid, content, second, *, model=None, usage=None):
+        message = {"content": content}
+        if mid is not None:
+            message["id"] = mid
+        if model is not None:
+            message["model"] = model
+        if usage is not None:
+            message["usage"] = usage
+        return {"type": "assistant", "message": message, "timestamp": _ts(second)}
+
+    text = lambda value: {"type": "text", "text": value}  # noqa: E731
+    return [
+        {"type": "permission-mode", "permissionMode": "default"},
+        # A thinking-only response emits no turn: not even "pending" yet.
+        assistant("m0", [{"type": "thinking", "thinking": "hm"}], 1,
+                  model="claude-thinking-only", usage={"input_tokens": 5, "output_tokens": 1}),
+        {"type": "user", "message": {"content": "first task"}, "timestamp": _ts(2)},
+        # One response over three lines: model/usage from the last informative line.
+        assistant("m1", [{"type": "thinking", "thinking": "plan"}], 3, model="claude-a"),
+        assistant("m1", [{"type": "tool_use", "id": "t1", "name": "Bash",
+                          "input": {"command": "ls"}}], 4,
+                  model="claude-a", usage={"input_tokens": 10, "output_tokens": 2}),
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]},
+         "timestamp": _ts(5)},  # a pure tool-result echo does not end the response
+        assistant("m1", [text("done")], 6, model="claude-b",
+                  usage={"input_tokens": 100, "cache_read_input_tokens": 50,
+                         "cache_creation_input_tokens": 7, "output_tokens": 9}),
+        {"type": "assistant", "isSidechain": True, "message": {
+            "id": "side", "model": "claude-subagent", "content": [text("child")],
+            "usage": {"input_tokens": 999, "output_tokens": 1}}, "timestamp": _ts(7)},
+        # Synthetic API-error reply: never a model, never usage.
+        assistant("m2", [text("API Error")], 8, model="<synthetic>",
+                  usage={"input_tokens": 0, "output_tokens": 0}),
+        # Id-less lines never group.
+        assistant(None, [text("no id")], 9, model="claude-c",
+                  usage={"input_tokens": 3000, "output_tokens": 4}),
+        assistant(None, [], 10, model="claude-empty"),
+        {"type": "attachment", "attachment": {"type": "queued_command",
+                                              "prompt": "steer while busy"},
+         "timestamp": _ts(11)},
+        {"type": "user", "message": {"content": "<command-name>/compact</command-name>\n"
+                                                "<command-message>compact</command-message>"},
+         "timestamp": _ts(12)},
+        {"type": "system", "subtype": "local_command",
+         "content": "<local-command-stderr>Error: nope</local-command-stderr>",
+         "timestamp": _ts(13)},
+        {"type": "user", "message": {"content": "<command-name>/compact</command-name>"},
+         "timestamp": _ts(14)},
+        {"type": "system", "subtype": "compact_boundary", "content": "Conversation compacted",
+         "compactMetadata": {"trigger": "manual", "preTokens": 3000, "postTokens": 200},
+         "timestamp": _ts(15)},
+        {"type": "user", "message": {"content": [text("after compact")]}, "timestamp": _ts(16)},
+        assistant("m3", [text("fresh")], 17, model="claude-d",
+                  usage={"input_tokens": 40, "output_tokens": 2}),
+        {"type": "system", "subtype": "turn_duration", "durationMs": 5, "timestamp": _ts(18)},
+    ]
+
+
+def _full_observation(path):
+    """What the former whole-history render published (context, model)."""
+    from ccx.claude.context import compaction_unknown_context, compute_context_usage
+    turns = list(T._iter_clean_turns(path))
+    context = compute_context_usage(turns)
+    pending = T.pending_compact_request(path)
+    if pending is not None:
+        context = compaction_unknown_context("compacting", as_of_ms=pending.get("as_of_ms"))
+    model = next((turn["model"] for turn in reversed(turns)
+                  if turn.get("role") == "assistant" and T._valid_observed_model(turn.get("model"))),
+                 None)
+    return context, model
+
+
+def test_observation_reducer_matches_full_render_at_every_cut_and_resume(tmp_path):
+    lines = [json.dumps(event) for event in _observation_events()]
+    lines.insert(5, "}} not json {{")
+    seen_states = set()
+    for end in range(len(lines) + 1):
+        path = tmp_path / f"prefix-{end}.jsonl"
+        path.write_text("".join(line + "\n" for line in lines[:end]))
+        expected = _full_observation(path)
+        events = list(T._iter_transcript(path))
+        for split in range(len(events) + 1):
+            first = T._ObservationReducer()
+            for event in events[:split]:
+                first.feed(event)
+            # The persisted cursor is JSON; resume from exactly that.
+            state = json.loads(json.dumps(first.state()))
+            assert T._ObservationReducer.valid_state(state)
+            resumed = T._ObservationReducer(state)
+            for event in events[split:]:
+                resumed.feed(event)
+            assert resumed.observe() == expected, (end, split)
+        seen_states.add(json.dumps(expected[0], sort_keys=True))
+    # The fixture really walks through every context state.
+    reasons = {json.loads(s)["state"] if s != "null" else None for s in seen_states}
+    assert reasons == {None, "pending", "known", "unknown"}
+
+
+def _observation_store(tmp_path, monkeypatch, events):
+    src = _write_jsonl(tmp_path, events)
+    owner, observation, rec = _render_owned_source(tmp_path, monkeypatch, src)
+    return owner, observation, Path(rec["transcript"])
+
+
+def _count_parse_starts(monkeypatch):
+    starts = []
+    original = T._iter_transcript
+
+    def recording(path, *args, **kwargs):
+        starts.append(kwargs.get("after_offset", 0))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(T, "_iter_transcript", recording)
+    return starts
+
+
+def test_refresh_parses_only_appended_complete_lines(tmp_path, monkeypatch):
+    events = _observation_events()
+    owner, _observation, native = _observation_store(tmp_path, monkeypatch, events[:7])
+    starts = _count_parse_starts(monkeypatch)
+    first = T.refresh_context_observation(owner)
+    assert starts == [0] and first["context"]["tokens_used"] == 157
+    with native.open("ab") as out:
+        for event in events[7:12]:
+            out.write((json.dumps(event) + "\n").encode())
+        out.write(json.dumps(events[12]).encode())  # partial: no newline yet
+    second = T.refresh_context_observation(owner)
+    assert starts == [0, first["source"]["endOffset"]]
+    assert second["source"]["endOffset"] == native.stat().st_size - len(json.dumps(events[12]))
+    with native.open("ab") as out:
+        out.write(b"\n")
+        for event in events[13:]:
+            out.write((json.dumps(event) + "\n").encode())
+    third = T.refresh_context_observation(owner)
+    assert starts[-1] == second["source"]["endOffset"]
+    assert (third["context"], third["observedModel"]) == _full_observation(native)
+    assert third["context"]["tokens_used"] == 40 and third["observedModel"] == "claude-d"
+    # Nothing new: resume at the end, same facts.
+    again = T.refresh_context_observation(owner)
+    assert starts[-1] == native.stat().st_size
+    assert again["context"] == third["context"] and again["cursor"] == third["cursor"]
+
+
+@pytest.mark.parametrize("damage", ["rewritten_longer", "cursor_version", "bad_state",
+                                    "other_inode", "missing"])
+def test_refresh_starts_again_when_the_cursor_cannot_be_trusted(tmp_path, monkeypatch, damage):
+    from ccx import constants
+    from ccx.store.root import _write_json, require_ccx_active
+
+    events = _observation_events()
+    owner, observation, native = _observation_store(tmp_path, monkeypatch, events[:7])
+    first = T.refresh_context_observation(owner)
+    store = require_ccx_active(constants.CCX_ROOT)
+    doc = json.loads(observation.read_text())
+    if damage == "rewritten_longer":
+        # Same inode, truncated and rewritten past the old offset: the bytes
+        # before the old offset changed, so resuming there would be wrong.
+        rewritten = [{"type": "user", "message": {"content": "x" * 2000}, "timestamp": _ts(1)},
+                     *events[16:]]
+        native.write_text("".join(json.dumps(e) + "\n" for e in rewritten))
+        assert native.stat().st_size > first["source"]["endOffset"]
+    elif damage == "cursor_version":
+        doc["cursor"]["version"] = 999
+    elif damage == "bad_state":
+        doc["cursor"]["state"] = {"anyTurn": "yes"}
+    elif damage == "other_inode":
+        doc["source"]["ino"] += 1
+    else:
+        doc.pop("cursor")
+    if damage != "rewritten_longer":
+        with store._gen("workers", "claude", owner) as fd:
+            _write_json(fd, "context-observation.json", doc)
+    starts = _count_parse_starts(monkeypatch)
+    refreshed = T.refresh_context_observation(owner)
+    assert starts == [0]
+    assert (refreshed["context"], refreshed["observedModel"]) == _full_observation(native)
+

@@ -670,9 +670,9 @@ def source_cli(original_sources):
         "context": {"tokens_used": 123456, "window_size": 200000,
                     "percent_used": 61.728, "as_of_turn_ref": None, "as_of_ms": 1234},
     })
-    from ccx.claude.transcript import render_transcript_json
-    render_transcript_json(A, store=store)  # compact boundary: no stale tokens
-    render_transcript_json(B, store=store)  # normal measured Claude context
+    from ccx.claude.transcript import refresh_context_observation
+    refresh_context_observation(A, store=store)  # compact boundary: no stale tokens
+    refresh_context_observation(B, store=store)  # normal measured Claude context
 
     def cli(*args):
         proc = subprocess.run(

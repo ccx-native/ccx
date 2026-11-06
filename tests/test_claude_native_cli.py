@@ -633,7 +633,7 @@ def test_r1_real_detached_fake_provider_0775_native_tree_renders_without_chmod07
         rendered = None
         until = time.monotonic() + 18
         while time.monotonic() < until:
-            rendered = store.read_worker_sidecar(A, "transcript.json")
+            rendered = store.read_worker_sidecar(A, "context-observation.json")
             if (rendered and isinstance(rendered.get("context"), dict)
                     and rendered["context"].get("tokens_used") == 1200):
                 break
@@ -696,10 +696,6 @@ def test_r1_real_detached_fake_provider_0775_native_tree_renders_without_chmod07
         }
         rec = store.record(A)
         assert rec["native"]["sessionId"] != A
-        assert rendered["worker"] == f"claude:{A}"
-        assert rendered["sessionId"] == rec["native"]["sessionId"]
-        assert rendered["turns"][-1]["model"] == "fake-claude-recorded-native-model"
-        assert rendered["turns"][-1]["text"] == "Fake Claude completed: prove 0775 provider render"
         observed = store.read_worker_sidecar(A, "context-observation.json")
         assert observed["workerId"] == A
         assert observed["nativeSessionId"] == rec["native"]["sessionId"]
@@ -717,7 +713,7 @@ def test_r1_real_detached_fake_provider_0775_native_tree_renders_without_chmod07
         assert stat.S_IMODE(native.stat().st_mode) == 0o600
         assert [stat.S_IMODE(path.stat().st_mode) for path in
                 (provider_home, provider_home / "projects", native.parent)] == [0o775] * 3
-        published = store.worker_path(A, "transcript.json")
+        published = store.worker_path(A, "context-observation.json")
         assert stat.S_IMODE(published.stat().st_mode) == 0o600
         assert not list(published.parent.glob(".new-*"))
     finally:

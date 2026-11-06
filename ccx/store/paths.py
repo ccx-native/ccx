@@ -142,10 +142,6 @@ def record_path(short: str) -> pathlib.Path:
     return _owner_path(short, "record.json")
 
 
-def transcript_json_path(short: str) -> pathlib.Path:
-    return _owner_path(short, "transcript.json")
-
-
 def statusline_json_path(short: str) -> pathlib.Path:
     return _owner_path(short, "statusline.json")
 

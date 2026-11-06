@@ -16,7 +16,7 @@ import json
 import ccx.claude.host.events as H
 from ccx import types as T
 from ccx.constants import EVENT_SCHEMA_VERSION
-from ccx.claude.transcript import TRANSCRIPT_SCHEMA_VERSION, render_transcript_json
+from ccx.claude.transcript import TRANSCRIPT_SCHEMA_VERSION, render_transcript
 
 
 def _json_stable(d):
@@ -198,10 +198,8 @@ def test_rendered_transcript_document_shape(tmp_path, monkeypatch):
             "usage": {"input_tokens": 3, "output_tokens": 2}},
          "timestamp": "2026-01-01T00:00:01Z"},
     ]))
-    owner, rendered, _ = _render_owned_source(tmp_path, monkeypatch, tp)
-    render_transcript_json(owner)
-    with rendered.open() as f:
-        doc = json.load(f)
+    owner, _observation, _ = _render_owned_source(tmp_path, monkeypatch, tp)
+    doc = render_transcript(owner)
     assert doc["schemaVersion"] == TRANSCRIPT_SCHEMA_VERSION == 2
     assert sorted(doc) == sorted([
         "schemaVersion", "generatedAt", "worker", "sessionId", "name", "cwd",

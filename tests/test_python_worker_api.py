@@ -221,7 +221,7 @@ def test_worker_status_and_list_restore_recorded_model_fields(tmp_path, monkeypa
         },
     }) + "\n")
     owner, _, _ = _render_owned_source(tmp_path, monkeypatch, native)
-    transcript_module.render_transcript_json(owner)
+    transcript_module.refresh_context_observation(owner)
     add_worker(constants.CCX_ROOT, B, "codex")
     store = require_ccx_active(constants.CCX_ROOT)
     store.mutate_record(A, patches={
@@ -576,10 +576,9 @@ def test_worker_summaries_full_uuid_same_prefix_canonical_dedup_and_no_effects(
 
     monkeypatch.setattr(codex_runtime, "observe_registry", forbidden)
     monkeypatch.setattr(codex_runtime, "observe_worker", forbidden)
-    monkeypatch.setattr(transcript_module, "render_transcript_json", forbidden)
-    monkeypatch.setattr(client_module, "render_transcript_json", forbidden)
-    monkeypatch.setattr(worker_module, "_claude_observed_model", forbidden)
-    monkeypatch.setattr(worker_module, "_claude_statusline_model", forbidden)
+    monkeypatch.setattr(transcript_module, "render_transcript", forbidden)
+    monkeypatch.setattr(transcript_module, "refresh_context_observation", forbidden)
+    monkeypatch.setattr(client_module, "render_transcript", forbidden)
     # The deleted transcript cache must not be consulted by any read.
     assert not hasattr(cli_read, "_context_snapshot_for_record")
 
@@ -797,17 +796,18 @@ def test_worker_context_real_v2_observation_same_prefix_and_no_read_effects(
         },
     }) + "\n")
     path_b.chmod(0o600)
-    transcript_module.render_transcript_json(A)
-    transcript_module.render_transcript_json(B)
+    transcript_module.refresh_context_observation(A)
+    transcript_module.refresh_context_observation(B)
     assert A[:8] == B[:8] and rec_a["native"]["sessionId"] != rec_b["native"]["sessionId"]
     before = _worker_summaries_file_snapshot(constants.CCX_ROOT)
 
     def forbidden(*_a, **_k):
         pytest.fail("observation must never render or read provider telemetry")
 
-    monkeypatch.setattr(transcript_module, "render_transcript_json", forbidden)
-    monkeypatch.setattr(client_module, "render_transcript_json", forbidden)
-    monkeypatch.setattr(worker_module, "_claude_observed_model", forbidden)
+    monkeypatch.setattr(transcript_module, "render_transcript", forbidden)
+
+    monkeypatch.setattr(transcript_module, "refresh_context_observation", forbidden)
+    monkeypatch.setattr(client_module, "render_transcript", forbidden)
     assert not hasattr(cli_read, "_context_snapshot_for_record")
     facade = WorkerClient()
     summaries = facade.summaries([A, f"claude:{B}", f"claude:{A}"])
@@ -848,17 +848,12 @@ def test_worker_context_large_native_history_reads_only_small_sidecar(
             "usage": {"input_tokens": 90123, "output_tokens": 11},
         }},
     ]) + "\n")
-    owner, rendered, _rec = _render_owned_source(tmp_path, monkeypatch, src)
-    transcript_module.render_transcript_json(owner)
-    store = require_ccx_active(constants.CCX_ROOT)
-    obs = store.worker_path(owner, "context-observation.json")
-    assert rendered.stat().st_size > 20 * 1024 * 1024
-    assert obs.stat().st_size < 2048
-    with pytest.raises(StorageIntegrityError, match="bounded read size"):
-        store.read_worker_sidecar(owner, "transcript.json")
+    owner, obs, _rec = _render_owned_source(tmp_path, monkeypatch, src)
+    transcript_module.refresh_context_observation(owner)
+    assert obs.stat().st_size < 2048  # small however large the history
     before = _worker_summaries_file_snapshot(constants.CCX_ROOT)
     for renderer_module in (transcript_module, client_module):
-        monkeypatch.setattr(renderer_module, "render_transcript_json", lambda *_a, **_k:
+        monkeypatch.setattr(renderer_module, "render_transcript", lambda *_a, **_k:
                             pytest.fail("native render on read is forbidden"))
     facade = WorkerClient()
     assert facade.summaries([owner])["workers"][0]["observed_model"] == "native-large-history-model"
@@ -908,7 +903,7 @@ def test_worker_context_sidecar_foreign_identity_fails_closed(tmp_path, monkeypa
         },
     }) + "\n")
     owner, _dst, _rec = _render_owned_source(tmp_path, monkeypatch, src)
-    transcript_module.render_transcript_json(owner)
+    transcript_module.refresh_context_observation(owner)
     store = require_ccx_active(constants.CCX_ROOT)
     sidecar = store.worker_path(owner, "context-observation.json")
     doc = json.loads(sidecar.read_text())

@@ -663,7 +663,7 @@ class GenerationStore:
         Host/client readers use this rather than opening an unpinned
         pathname returned by worker_path().
         """
-        if filename not in ("record.json", "settings.json", "transcript.json",
+        if filename not in ("record.json", "settings.json",
                             "statusline.json", "compact.json",
                             "context-observation.json"):
             raise StorageIntegrityError("unsupported CCX-owned JSON worker sidecar")
@@ -673,7 +673,7 @@ class GenerationStore:
                 return _read_json(dir_fd, filename)
 
     def worker_path(self, target: str, filename: str = "record.json") -> Path:
-        if filename not in ("record.json", "settings.json", "transcript.json",
+        if filename not in ("record.json", "settings.json",
                             "statusline.json", "events.ndjson",
                             "evidence.jsonl", "compact.json", "context-observation.json"):
             raise StorageIntegrityError("unknown worker sidecar family")

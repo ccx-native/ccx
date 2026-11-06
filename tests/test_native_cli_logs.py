@@ -131,7 +131,7 @@ def test_cli_logs_claude_normalized_default_bound_full_zero_prefix_and_no_cache(
     assert invalid_bound.returncode == 1 and not invalid_bound.stdout
     assert "--max-tool-result-bytes must be zero or greater" in invalid_bound.stderr
     assert before == store.worker_path(A, "record.json").read_bytes()
-    assert not store.worker_path(A, "transcript.json").exists()
+    assert not (store.worker_path(A).parent / "transcript.json").exists()
     assert not store.worker_path(A, "context-observation.json").exists()
     assert not (store.root / "sessions").exists()
 
@@ -157,7 +157,7 @@ def test_cli_logs_claude_rendered_raw_priority_utf8_and_original_source_errors(
                     "--max-tool-result-bytes", "-1", "--full")
     assert raw_call.returncode == 0 and not raw_call.stderr
     assert raw_call.stdout == raw and not raw_call.stdout.endswith("\n")
-    assert not store.worker_path(A, "transcript.json").exists()
+    assert not (store.worker_path(A).parent / "transcript.json").exists()
     assert not store.worker_path(A, "context-observation.json").exists()
 
     legacy = _cli(store, A, "--format", "rendered", "--tail", "1",
@@ -171,24 +171,21 @@ def test_cli_logs_claude_rendered_raw_priority_utf8_and_original_source_errors(
     assert len(doc["turns"]) == 1 and doc["turns"][-1]["text"] == "terminé été"
     all_turns = _cli(store, A, "--format", "rendered", "--tail", "0")
     assert all_turns.returncode == 0 and len(json.loads(all_turns.stdout)["turns"]) > 1
-    rendered = store.worker_path(A, "transcript.json")
-    context = store.worker_path(A, "context-observation.json")
-    assert rendered.is_file() and context.is_file()
-    cache = rendered.read_bytes()
+    # Rendering is read-only: no cache or observation is published.
+    assert not (store.worker_path(A).parent / "transcript.json").exists()
+    assert not store.worker_path(A, "context-observation.json").exists()
 
     native.unlink()
     for flags in ((), ("--format", "rendered"), ("--jsonl",)):
         missing = _cli(store, A, *flags)
         assert missing.returncode == 2 and not missing.stdout, (flags, missing)
         assert "transcript" in missing.stderr
-    assert rendered.read_bytes() == cache  # No stale cache fallback, no overwrite.
 
     native.symlink_to(Path(store.record(B)["transcript"]))
     for flags in ((), ("--jsonl",), ("--format", "rendered")):
         refused = _cli(store, A, *flags)
         assert refused.returncode == 3 and not refused.stdout, (flags, refused)
         assert "original" in refused.stderr or "native" in refused.stderr
-    assert rendered.read_bytes() == cache
 
 
 def test_cli_logs_codex_original_inprocess_global_prefix_and_typed_refusals(

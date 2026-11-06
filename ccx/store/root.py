@@ -298,32 +298,17 @@ def _read_json(fd: int, name: str, *, max_bytes: int = _FILE_LIMIT) -> dict | No
     return val
 
 
-def _write_json(
-    fd: int, name: str, value: Mapping, *, rendered_transcript: bool = False,
-) -> None:
+def _write_json(fd: int, name: str, value: Mapping) -> None:
     """Fsync new 0600 inode, same-directory atomic replace and directory fsync.
 
-    A cleaned Claude transcript is the one legacy JSON exception: its public
-    schema retains indented turns and may exceed the generic 4 MiB metadata
-    limit. Keep this explicit filename-scoped producer mode; all other store
-    writes retain their original byte format and strict metadata bound. The
-    runtime sidecar reader remains independently bounded to 4 MiB.
+    Every owned JSON file is compact and bounded to 4 MiB.
     """
     if not name or "/" in name or name in (".", ".."):
         raise StorageIntegrityError("unsafe owned output basename")
-    if rendered_transcript:
-        if name != "transcript.json":
-            raise StorageIntegrityError("pretty unlimited JSON only allowed for owned transcript")
-        # The previous renderer used json.dumps(..., indent=2)'s default
-        # ensure_ascii=True. Preserve its surrogate-safe escaping and Unicode
-        # roundtrip; only this rendered-transcript branch changes, not the
-        # generic compact metadata writer below.
-        raw = json.dumps(value, indent=2, ensure_ascii=True, allow_nan=False).encode("utf-8")
-    else:
-        raw = (json.dumps(value, sort_keys=True, separators=(",", ":"),
-                          ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
-        if len(raw) > _FILE_LIMIT:
-            raise StorageIntegrityError("owned JSON exceeds bounded writer size")
+    raw = (json.dumps(value, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+    if len(raw) > _FILE_LIMIT:
+        raise StorageIntegrityError("owned JSON exceeds bounded writer size")
     name_tmp = ".new-" + uuid4().hex
     output_fd = os.open(
         name_tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,

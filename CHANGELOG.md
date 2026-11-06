@@ -5,6 +5,17 @@ All notable changes to ccx are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Claude hosts no longer re-read a worker's whole transcript after every turn.
+  Context and model readings update from what Claude wrote since the last
+  reading, so long-lived workers stay fast and use little memory.
+
+### Removed
+
+- The per-worker `transcript.json` file and the worker record's
+  `transcriptJson` field. `ccx logs` still renders the conversation on demand.
+
 ## [0.1.0] - 2026-11-03
 
 First public release.

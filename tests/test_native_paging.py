@@ -98,7 +98,7 @@ def test_native_source_counts_cursor_walk_compaction_tool_join_and_complete_eof(
     assert compact["items"][0]["data"]["summary"] == "original compact summary"
     assert all(p["completeness"]["returned_source_record_count"] == len(p["records"]) for p in pages)
     assert client.conversation_page(B)["records"][0]["source_record_id"] == "b0"
-    assert not store.worker_path(A, "transcript.json").exists()
+    assert not (store.worker_path(A).parent / "transcript.json").exists()
     assert not (constants.CCX_ROOT / "sessions").exists()
 
 

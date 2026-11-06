@@ -42,7 +42,7 @@ def test_claude_logs_full_uuid_clean_tail_raw_and_same_short_two_originals(
 ):
     source = _source(tmp_path, _user("first prompt"), _assistant("first reply"),
                      _user("second prompt"), _assistant("second reply 🎯"))
-    owner, rendered, rec_a = _render_owned_source(tmp_path, monkeypatch, source)
+    owner, observation, rec_a = _render_owned_source(tmp_path, monkeypatch, source)
     assert owner == A and rec_a["native"]["sessionId"] != A
     store = require_ccx_active(constants.CCX_ROOT)
     prepared = prepare_worker(store, engine="claude", cwd=str(tmp_path), worker_id=B)
@@ -63,11 +63,10 @@ def test_claude_logs_full_uuid_clean_tail_raw_and_same_short_two_originals(
     expected = native_a.read_bytes().decode("utf-8", errors="replace")
     assert client.logs(A, jsonl=True, tail=1) == expected
     assert expected.endswith('"message":\ufffd')
-    assert not rendered.exists()
-    assert not store.worker_path(A, "context-observation.json").exists()
+    assert not observation.exists()
 
     doc_a = client.logs(A)
-    assert doc_a == json.loads(rendered.read_text())
+    assert not observation.exists()  # a rendered read publishes nothing either
     assert doc_a["schemaVersion"] == 2 and "short" not in doc_a
     assert doc_a["worker"] == f"claude:{A}" and doc_a["sessionId"] == rec_a["native"]["sessionId"]
     assert doc_a["transcriptJsonl"] == rec_a["transcript"]
@@ -99,16 +98,15 @@ def test_claude_logs_missing_unsafe_original_and_generation_never_uses_stale_ren
     tmp_path, monkeypatch,
 ):
     source = _source(tmp_path, _user("original"), _assistant("original reply"))
-    _, rendered, rec = _render_owned_source(tmp_path, monkeypatch, source)
+    _, observation, rec = _render_owned_source(tmp_path, monkeypatch, source)
     client = CcxClient()
     assert client.logs(A)["turns"][-1]["text"] == "original reply"
-    cache = rendered.read_bytes()
     native = Path(rec["transcript"])
     native.unlink()
     for kwargs in ({}, {"jsonl": True}):
         with pytest.raises(SessionNotFound, match="transcript not found"):
             client.logs(A, **kwargs)
-    assert rendered.read_bytes() == cache  # cache is never used as a fallback
+    assert not observation.exists()  # nothing derived to fall back to
 
     # Existing native file reopened through an unsafe symlink must be rejected.
     native.symlink_to(source)
@@ -142,7 +140,7 @@ def test_claude_logs_missing_unsafe_original_and_generation_never_uses_stale_ren
         patch.setattr(GenerationStore, "record", wrong_native_sid)
         with pytest.raises(SessionUnavailable, match="original Claude transcript unavailable"):
             client.logs(A)
-    assert rendered.read_bytes() == cache
+    assert not observation.exists()
 
     # A fresh G2 claim of the *same* full UUID cannot be adopted by old client.
     switch_pointer(constants.CCX_ROOT, G2)
@@ -158,14 +156,13 @@ def test_claude_logs_large_clean_history_append_complete_boundary_and_default_re
 ):
     long_text = "native-" + "Z" * (4 * 1024 * 1024 + 2048)
     source = _source(tmp_path, _user(long_text), _assistant("first answer"))
-    _, rendered, rec = _render_owned_source(tmp_path, monkeypatch, source)
+    _, observation, rec = _render_owned_source(tmp_path, monkeypatch, source)
     client = CcxClient()
     first = client.logs(A)
     assert first["turns"][0]["text"] == long_text
-    assert rendered.stat().st_size > 4 * 1024 * 1024
+    assert len(json.dumps(first)) > 4 * 1024 * 1024  # beyond any sidecar bound
     assert first["context"]["tokens_used"] == 123
-    with pytest.raises(StorageIntegrityError, match="bounded read size"):
-        client._uuid_store.read_worker_sidecar(A, "transcript.json")
+    assert not observation.exists()  # logs is a read; it publishes nothing
 
     native = Path(rec["transcript"])
     with native.open("ab") as f:
@@ -178,8 +175,6 @@ def test_claude_logs_large_clean_history_append_complete_boundary_and_default_re
     assert all(turn.get("text") is not None for turn in second["turns"])
     assert client.logs(A, tail=1)["turns"] == second["turns"][-1:]
     assert client.logs(A, jsonl=True).endswith('{"type":"assistant","message":{"content": [')
-    # Existing direct callers still use the default ACTIVE renderer and may
-    # ignore the returned document. Its return equals the existing published file.
-    default = transcript.render_transcript_json(A)
+    # Direct callers use the default ACTIVE renderer.
+    default = transcript.render_transcript(A)
     assert default["turns"] == second["turns"]
-    assert default == json.loads(rendered.read_text())

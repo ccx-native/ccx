@@ -105,11 +105,11 @@ def test_summaries_read_existing_artifacts_without_rendering(tmp_path, monkeypat
         }},
     ]) + "\n")
     worker_id, _dst, rec = _render_owned_source(tmp_path, monkeypatch, src)
-    T.render_transcript_json(worker_id)
+    T.refresh_context_observation(worker_id)
     assert rec["native"]["sessionId"] != worker_id
 
     for renderer_module in (T, client_module):
-        monkeypatch.setattr(renderer_module, "render_transcript_json", lambda *_a, **_k:
+        monkeypatch.setattr(renderer_module, "render_transcript", lambda *_a, **_k:
                             pytest.fail("summaries must never render"))
     row = WorkerClient().summaries([f"claude:{worker_id}"])["workers"][0]
     assert row["worker"] == f"claude:{worker_id}" and row["worker_id"] == worker_id
@@ -260,7 +260,7 @@ def test_recap_carries_context_and_its_as_of_marker(tmp_path, monkeypatch):
         },
     }) + "\n")
     owner, _, _ = _render_owned_source(tmp_path, monkeypatch, native)
-    transcript_module.render_transcript_json(owner)
+    transcript_module.refresh_context_observation(owner)
     root = constants.CCX_ROOT
     add_worker(root, B, "codex")
     store = require_ccx_active(root)
@@ -299,8 +299,9 @@ def test_recap_never_revives_a_worker_or_starts_a_turn(active_api_root, monkeypa
     from ccx import client as client_module
     from ccx.codex import runtime as codex_runtime
     from ccx.claude import transcript as transcript_module
-    monkeypatch.setattr(transcript_module, "render_transcript_json", forbidden)
-    monkeypatch.setattr(client_module, "render_transcript_json", forbidden)
+    monkeypatch.setattr(transcript_module, "render_transcript", forbidden)
+    monkeypatch.setattr(transcript_module, "refresh_context_observation", forbidden)
+    monkeypatch.setattr(client_module, "render_transcript", forbidden)
     monkeypatch.setattr(W, "_respawn", forbidden)
     monkeypatch.setattr(W, "_rpc", forbidden)
     monkeypatch.setattr(codex_runtime, "observe_registry", forbidden)
@@ -333,7 +334,7 @@ def test_recap_rejects_foreign_context_observation(tmp_path, monkeypatch):
         },
     }) + "\n")
     owner, _, _ = _render_owned_source(tmp_path, monkeypatch, native)
-    transcript_module.render_transcript_json(owner)
+    transcript_module.refresh_context_observation(owner)
     store = require_ccx_active(constants.CCX_ROOT)
     sidecar = store.worker_path(owner, "context-observation.json")
     doc = json.loads(sidecar.read_text())

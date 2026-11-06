@@ -6,7 +6,6 @@ CCX worker UUIDs independently of provider-native identifiers."""
 from __future__ import annotations
 import ccx.cli.commands.read as commands_read
 
-import json
 import os
 import signal
 import time
@@ -44,7 +43,7 @@ from .errors import (
     worker_not_found,
 )
 from ccx.store.liveness import pid_alive, recorded_host_loaded
-from ccx.store.paths import sock_path, statusline_json_path
+from ccx.store.paths import sock_path
 from ccx.store.records import merge_lifecycle
 from ccx.rpc.rpc import _respawn, _respawn_failure_message, _rpc
 from ccx.ops.semantics import KIND_ELICITATION, pending_input_kind
@@ -323,44 +322,6 @@ def _unsupported(engine: str, capability: str, detail: str) -> CapabilityUnsuppo
     return CapabilityUnsupported(
         f"{engine} does not support {detail}", engine=engine, capability=capability
     )
-
-
-def _claude_observed_model(rec: dict) -> str | None:
-    """The model Claude actually answered with, from the rendered transcript.
-
-    Never falls back to the requested model, and never accepts ``<synthetic>``
-    (the pseudo-model on API-error replies). Reads the already-rendered document
-    so this stays cheap enough for ``status``.
-    """
-    path = rec.get("transcriptJson")
-    if not path:
-        return None
-    try:
-        with open(path, encoding="utf-8") as handle:
-            doc = json.load(handle)
-    except (OSError, ValueError):
-        return None
-    for turn in reversed(doc.get("turns") or []):
-        model = turn.get("model")
-        if isinstance(model, str) and model and model != "<synthetic>":
-            return model
-    return None
-
-
-def _claude_statusline_model(short: str) -> str | None:
-    """Last model Claude reported through the compact statusline sidecar.
-
-    Unlike context freshness, a settled worker's last observed model does not
-    expire.  This is a read-only fallback for inventory summaries when the
-    cleaned transcript cache has not been rendered yet.
-    """
-    try:
-        doc = json.loads(statusline_json_path(short).read_text())
-    except (OSError, ValueError):
-        return None
-    model = doc.get("model") if isinstance(doc, dict) else None
-    value = model.get("id") if isinstance(model, dict) else None
-    return value if isinstance(value, str) and value and value != "<synthetic>" else None
 
 
 def _summary_context(block: dict | None, *, has_turn: bool, codex: bool) -> dict:

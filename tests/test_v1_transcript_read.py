@@ -238,7 +238,7 @@ def test_v1_transcript_real_full_history_turn_offset_and_content_revision(
         assert calls[0] == 120  # direct Python default unchanged
         assert all(0 < budget <= 90 for budget in calls[1:])
     assert store.worker_path(wid, "record.json").read_bytes() == after_metadata
-    assert not store.worker_path(wid, "transcript.json").exists()
+    assert not (store.worker_path(wid).parent / "transcript.json").exists()
     assert not (constants.CCX_ROOT / "sessions").exists()
     assert not (constants.CCX_ROOT / "run").exists()
 

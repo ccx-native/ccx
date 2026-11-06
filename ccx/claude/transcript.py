@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 from contextlib import ExitStack, contextmanager
 import io
 import json
@@ -12,7 +13,6 @@ import time
 
 from ccx.system import oslayer
 from ccx.claude.context import compaction_unknown_context, compute_context_usage
-from ccx.store.paths import transcript_json_path
 from ccx.store.record_cache import StampedCache
 from ccx.store.records import read_record
 
@@ -2175,19 +2175,15 @@ def open_original_claude_source(store, owner, rec):
         yield pinned_source, source_stat, end_offset, source_path, current
 
 
-def render_transcript_json(short: str, *, store=None) -> dict | None:
-    """Refresh one V2 Claude-owned render from the original native JSONL.
 
-    The record's native session ID is not the CCX worker UUID. Bind source
-    derivation to the original immutable create intent, pin the provider file
-    before either read, and publish only through the ACTIVE generation's exact
-    full-UUID worker directory. An optional pinned store preserves the
-    caller's original ACTIVE generation. The published dict is also returned;
-    missing upstream JSONL returns None. Record transcriptJson is display metadata,
-    never a pathname from which to read or onto which to write.
+def render_transcript(short: str, *, store=None) -> dict | None:
+    """Render one Claude worker's cleaned transcript from its original JSONL.
+
+    Read-only and on demand (``logs``): parses the whole native transcript, so
+    nothing on a hot path may call it. Missing upstream JSONL returns None.
     """
     from ccx import constants
-    from ccx.store.root import StorageIntegrityError, _write_json, require_ccx_active
+    from ccx.store.root import require_ccx_active
     from ccx.store.identity import EngineMismatch
 
     if store is None:
@@ -2198,12 +2194,8 @@ def render_transcript_json(short: str, *, store=None) -> dict | None:
     rec = store.record(owner.worker)
     with open_original_claude_source(store, owner, rec) as source:
         if source is None:
-            # Preserve original render's missing-native-file no-output behavior.
             return None
-        pinned_source, source_stat, end_offset, source_path, current = source
-        native_sid = rec["native"]["sessionId"]
-        cwd = rec["cwd"]
-        fingerprint = rec["createSha256"]
+        pinned_source, _source_stat, end_offset, source_path, _current = source
         stats = {"malformedLines": 0, "truncatedToolResults": 0}
         turns = list(_iter_clean_turns(
             pinned_source, stats, before_offset=end_offset,
@@ -2212,58 +2204,282 @@ def render_transcript_json(short: str, *, store=None) -> dict | None:
         pending_compact = pending_compact_request(
             pinned_source, before_offset=end_offset,
         )
-        if pending_compact is not None:
+    if pending_compact is not None:
+        context = compaction_unknown_context(
+            "compacting", as_of_ms=pending_compact.get("as_of_ms"),
+        )
+    return {
+        "schemaVersion": TRANSCRIPT_SCHEMA_VERSION,
+        "generatedAt": int(time.time() * 1000),
+        "worker": owner.worker,
+        "sessionId": rec["native"]["sessionId"],
+        "name": rec.get("name", owner.short),
+        "cwd": rec["cwd"],
+        "transcriptJsonl": str(source_path),
+        "turns": turns,
+        "context": context,
+        "stats": stats,
+    }
+
+
+def _valid_observed_model(model) -> bool:
+    return (isinstance(model, str) and 0 < len(model) <= 256
+            and model != "<synthetic>")
+
+
+class _ObservationReducer:
+    """The context, model and pending-compact facts of a cleaned transcript,
+    fed one raw event at a time so the host can resume where it stopped.
+
+    It mirrors exactly the parts of ``_iter_clean_turns`` those facts depend
+    on: which events emit a turn, how one response's lines group by message
+    id, and which line's model and usage win. ``render_transcript`` stays the
+    full renderer; tests pin the two together at every line boundary. The
+    state is small and JSON-serializable.
+    """
+
+    def __init__(self, state: dict | None = None):
+        state = state or {}
+        self.any_turn = state.get("anyTurn", False)
+        # Latest compact boundary or usable assistant usage, as a minimal
+        # cleaned turn that compute_context_usage reads.
+        self.anchor = state.get("anchor")
+        self.model = state.get("model")
+        self.pending_compact = state.get("pendingCompact")
+        # The response still accumulating: {mid, ts, content, model, tokens}.
+        self.open = state.get("open")
+
+    @staticmethod
+    def valid_state(state) -> bool:
+        if not isinstance(state, dict) or not isinstance(state.get("anyTurn"), bool):
+            return False
+        anchor, model = state.get("anchor"), state.get("model")
+        pending, open_ = state.get("pendingCompact"), state.get("open")
+        return ((anchor is None or isinstance(anchor, dict))
+                and (model is None or _valid_observed_model(model))
+                and (pending is None or isinstance(pending, dict))
+                and (open_ is None or (isinstance(open_, dict)
+                                       and isinstance(open_.get("content"), bool))))
+
+    def state(self) -> dict:
+        return {"anyTurn": self.any_turn, "anchor": self.anchor, "model": self.model,
+                "pendingCompact": self.pending_compact, "open": self.open}
+
+    def _flush(self) -> None:
+        response, self.open = self.open, None
+        if response is None or not response["content"]:
+            return
+        self.any_turn = True
+        if _valid_observed_model(response.get("model")):
+            self.model = response["model"]
+        tokens = response.get("tokens")
+        if tokens is not None:
+            turn = {"role": "assistant", "ts": response.get("ts"), "tokens": tokens}
+            if (compute_context_usage([turn]) or {}).get("state") == "known":
+                self.anchor = turn
+
+    def _feed_compact(self, evt: dict, kind, ts) -> None:
+        # Same rules as pending_compact_request.
+        if kind == "system" and evt.get("subtype") == "compact_boundary":
+            self.pending_compact = None
+            return
+        content = None
+        if kind == "system" and evt.get("subtype") == "local_command":
+            content = evt.get("content")
+        elif kind == "user":
+            content = (evt.get("message") or {}).get("content")
+        if _is_compact_command_content(content):
+            self.pending_compact = {"as_of_ms": ts}
+        elif (self.pending_compact is not None and isinstance(content, str)
+                and ("<local-command-stdout>" in content
+                     or "<local-command-stderr>" in content)):
+            self.pending_compact = None
+
+    def feed(self, evt: dict) -> None:
+        kind = evt.get("type")
+        ts = _parse_event_ts_ms(evt)
+        self._feed_compact(evt, kind, ts)
+        if kind == "user":
+            content = (evt.get("message") or {}).get("content", "")
+            parts: list[str] = []
+            has_tool_results = False
+            if isinstance(content, str):
+                processed = _process_command_message(content)
+                if processed is None:
+                    return
+                parts.append(processed)
+            elif isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "text":
+                        processed = _process_command_message(block.get("text", ""))
+                        if processed is not None:
+                            parts.append(processed)
+                    elif block.get("type") == "tool_result":
+                        has_tool_results = True
+            if has_tool_results and not parts:
+                return
+            self._flush()
+            if "\n".join(p for p in parts if p).strip():
+                self.any_turn = True
+        elif kind == "assistant":
+            msg = evt.get("message") or {}
+            mid = msg.get("id")
+            if self.open is not None and (not mid or self.open["mid"] != mid):
+                self._flush()
+            if self.open is None:
+                self.open = {"mid": mid, "ts": ts, "content": False,
+                             "model": None, "tokens": None}
+            content = msg.get("content", [])
+            for block in content if isinstance(content, list) else ():
+                if not isinstance(block, dict):
+                    continue
+                text = block.get("text", "")
+                if ((block.get("type") == "text" and isinstance(text, str) and text.strip())
+                        or block.get("type") == "tool_use"):
+                    self.open["content"] = True
+            if msg.get("model"):
+                self.open["model"] = msg["model"]
+            usage = msg.get("usage", {}) or {}
+            if usage:
+                tokens = _usage_tokens(evt, usage)
+                self.open["tokens"] = {
+                    key: tokens[key] for key in
+                    ("input", "cache_read_input", "cache_creation_input")
+                    if key in tokens
+                }
+        elif kind == "attachment":
+            attachment = evt.get("attachment") or {}
+            if attachment.get("type") != "queued_command":
+                return
+            processed = _process_command_message(_block_text(attachment.get("prompt")))
+            if (processed or "").strip():
+                self._flush()
+                self.any_turn = True
+        elif kind == "system":
+            self._flush()
+            data = _clean_system_event(evt.get("subtype"), evt)
+            if data is not None:
+                self.any_turn = True
+                if data[0] == "compact_boundary":
+                    self.anchor = {"role": "system", "kind": "compact_boundary", "ts": ts}
+
+    def observe(self) -> tuple[dict | None, str | None]:
+        """(context, observed model) as the full render would report them now:
+        the open response counts as finished, as it does at end of file."""
+        final = _ObservationReducer(copy.deepcopy(self.state()))
+        final._flush()
+        turns = [final.anchor or {"role": "user"}] if final.any_turn else []
+        context = compute_context_usage(turns)
+        if final.pending_compact is not None:
             context = compaction_unknown_context(
-                "compacting", as_of_ms=pending_compact.get("as_of_ms"),
+                "compacting", as_of_ms=final.pending_compact.get("as_of_ms"),
             )
-        observed_model = next((
-            turn["model"] for turn in reversed(turns)
-            if turn.get("role") == "assistant"
-            and isinstance(turn.get("model"), str)
-            and 0 < len(turn["model"]) <= 256
-            and turn["model"] != "<synthetic>"
-        ), None)
-        observed_at = int(time.time() * 1000)
+        return context, final.model
+
+
+OBSERVATION_CURSOR_VERSION = 1
+# Bytes just before the resume offset whose hash proves the file was only
+# appended to since the last refresh (not truncated and rewritten in place).
+_OBSERVATION_FENCE_BYTES = 4096
+
+
+def _observation_fence_sha(source: PinnedNativeSource, offset: int) -> str:
+    start = max(0, offset - _OBSERVATION_FENCE_BYTES)
+    return hashlib.sha256(os.pread(source.fd, offset - start, start)).hexdigest()
+
+
+def _resumable_observation_state(store, owner, native_sid, source, source_stat, end_offset):
+    """The prior observation's (offset, reducer state) when it still describes
+    a prefix of this exact source, else None (start again from the top)."""
+    try:
+        doc = store.read_worker_sidecar(owner.worker, "context-observation.json")
+    except Exception:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    observed, cursor = doc.get("source"), doc.get("cursor")
+    if (doc.get("schemaVersion") != 1 or doc.get("workerId") != owner.worker_id
+            or doc.get("nativeSessionId") != native_sid
+            or doc.get("generation") != store.generation
+            or not isinstance(observed, dict) or not isinstance(cursor, dict)
+            or observed.get("dev") != source_stat.st_dev
+            or observed.get("ino") != source_stat.st_ino
+            or type(observed.get("endOffset")) is not int
+            or not 0 <= observed["endOffset"] <= end_offset
+            or cursor.get("version") != OBSERVATION_CURSOR_VERSION
+            or not _ObservationReducer.valid_state(cursor.get("state"))
+            or cursor.get("fenceSha256") != _observation_fence_sha(source, observed["endOffset"])):
+        return None
+    return observed["endOffset"], cursor["state"]
+
+
+def refresh_context_observation(short: str, *, store=None) -> dict | None:
+    """Update one Claude worker's context/model observation from its JSONL.
+
+    Incremental: parses only what Claude appended since the previous
+    observation of the same source file (same inode, same generation), so a
+    long-lived worker's refresh costs what its last turn wrote, with constant
+    memory. Anything else starts again from the top, streaming. Publishes only
+    through the ACTIVE generation's exact full-UUID worker directory; missing
+    upstream JSONL returns None.
+    """
+    from ccx import constants
+    from ccx.store.root import StorageIntegrityError, _write_json, require_ccx_active
+    from ccx.store.identity import EngineMismatch
+
+    if store is None:
+        store = require_ccx_active(constants.CCX_ROOT)
+    owner = store.resolve(short)
+    if owner.engine != "claude":
+        raise EngineMismatch("context observation requires a Claude full-UUID owner")
+    rec = store.record(owner.worker)
+    with open_original_claude_source(store, owner, rec) as source:
+        if source is None:
+            return None
+        pinned_source, source_stat, end_offset, source_path, current = source
+        native_sid = rec["native"]["sessionId"]
+        cwd = rec["cwd"]
+        fingerprint = rec["createSha256"]
+        prior = _resumable_observation_state(
+            store, owner, native_sid, pinned_source, source_stat, end_offset)
+        start, state = prior if prior is not None else (0, None)
+        reducer = _ObservationReducer(state)
+        for event in _iter_transcript(
+            pinned_source, after_offset=start, before_offset=end_offset,
+        ):
+            reducer.feed(event)
+        context, observed_model = reducer.observe()
         observation = {
             "schemaVersion": 1,
             "workerId": owner.worker_id, "nativeSessionId": native_sid,
             "generation": store.generation,
             "source": {"dev": source_stat.st_dev, "ino": source_stat.st_ino,
-                       "endOffset": end_offset, "observedAtMs": observed_at},
+                       "endOffset": end_offset,
+                       "observedAtMs": int(time.time() * 1000)},
             "context": context, "observedModel": observed_model,
+            "cursor": {"version": OBSERVATION_CURSOR_VERSION,
+                       "fenceSha256": _observation_fence_sha(pinned_source, end_offset),
+                       "state": reducer.state()},
         }
-        out = {
-            "schemaVersion": TRANSCRIPT_SCHEMA_VERSION,
-            "generatedAt": int(time.time() * 1000),
-            "worker": owner.worker,
-            "sessionId": native_sid,
-            "name": rec.get("name", owner.short),
-            "cwd": cwd,
-            "transcriptJsonl": str(source_path),
-            "turns": turns,
-            "context": context,
-            "stats": stats,
-        }
-        # If the upstream original pathname was replaced between the two
-        # parsing passes and publication, the pinned old inode cannot prove a
-        # current original provider source. Normal append preserves inode.
+        # If the upstream pathname was replaced during the read, the pinned
+        # old inode no longer proves the current provider source.
         try:
             current_source = os.stat(
                 native_sid + ".jsonl", dir_fd=current, follow_symlinks=False,
             )
         except OSError as exc:
-            raise StorageIntegrityError("original Claude native JSONL disappeared during render") from exc
+            raise StorageIntegrityError("original Claude native JSONL disappeared during refresh") from exc
         if (current_source.st_dev != source_stat.st_dev
                 or current_source.st_ino != source_stat.st_ino
                 or not stat.S_ISREG(current_source.st_mode)
                 or current_source.st_uid != os.getuid()
                 or current_source.st_mode & 0o022
                 or current_source.st_size < end_offset):
-            raise StorageIntegrityError("original Claude native JSONL changed identity during render")
-        # Pin and revalidate global ownership after the expensive native read;
-        # a generation rotation or changed original source must not publish
-        # into a new owner's directory. The existing atomic writer creates its
-        # temp inode 0600 before exposing it, then fsyncs and replaces via fd.
+            raise StorageIntegrityError("original Claude native JSONL changed identity during refresh")
+        # Revalidate global ownership after the read; a generation rotation or
+        # changed original source must not publish into a new owner's directory.
         with store.lease():
             latest_owner, latest = store._owned(owner.worker)
             latest_native = latest.get("native")
@@ -2272,10 +2488,7 @@ def render_transcript_json(short: str, *, store=None) -> dict | None:
                     or latest.get("cwd") != cwd
                     or latest.get("transcript") != str(source_path)
                     or latest.get("createSha256") != fingerprint):
-                raise StorageIntegrityError("Claude original JSONL ownership changed during render")
+                raise StorageIntegrityError("Claude original JSONL ownership changed during refresh")
             with store._gen("workers", "claude", owner.worker_id) as worker_dir_fd:
-                # Separate atomically published files are fine: readers consume
-                # this complete observation, never a transactional turn pair.
                 _write_json(worker_dir_fd, "context-observation.json", observation)
-                _write_json(worker_dir_fd, "transcript.json", out, rendered_transcript=True)
-        return out
+        return observation

@@ -94,7 +94,7 @@ def test_full_conversation_claude_same_short_distinct_sid_complete_eof_and_tool_
     assert other["worker"]["nativeSessionId"] == rec_b["native"]["sessionId"]
     assert "only B" in json.dumps(other) and "only B" not in json.dumps(full)
     for wid in (A, B):
-        assert not store.worker_path(wid, "transcript.json").exists()
+        assert not (store.worker_path(wid).parent / "transcript.json").exists()
         assert not store.worker_path(wid, "context-observation.json").exists()
     assert not (constants.CCX_ROOT / "sessions").exists()
     with pytest.raises(TypeError, match="detail"):
