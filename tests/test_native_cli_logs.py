@@ -119,9 +119,11 @@ def test_cli_logs_claude_normalized_default_bound_full_zero_prefix_and_no_cache(
     zero = _cli(store, A, "--tail", "0")
     minus = _cli(store, A, "--tail", "-1")
     assert all(x.returncode == 0 for x in (one, zero, minus))
-    # A Claude tail reads only its own turns, so their numbers start at 1.
-    tail_turns = json.loads(one.stdout)["turns"]
-    assert [t["sequence"] for t in tail_turns] == [1]
+    # A Claude tail reads only its own turns, so it cannot number them.
+    tail_doc = json.loads(one.stdout)
+    tail_turns = tail_doc["turns"]
+    assert [t["sequence"] for t in tail_turns] == [None]
+    assert tail_doc["completeness"]["sourceLimited"] is True
     assert ([{**t, "sequence": None} for t in tail_turns]
             == [{**t, "sequence": None} for t in doc["turns"][-1:]])
     assert json.loads(zero.stdout)["turns"] == doc["turns"]

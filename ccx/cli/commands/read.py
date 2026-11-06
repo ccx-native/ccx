@@ -644,16 +644,24 @@ def _background_summary_line(summary: dict | None) -> str | None:
             f"subagent={kinds.get('subagent', 0)}")
 
 
-def _peek_window_enough(doc, tail: int) -> bool:
-    """A recent window holds what peek shows, or there is no older history."""
+def _peek_window_enough(doc, args) -> bool:
+    """A recent window holds what this peek shows, or there is no older history.
+
+    Tools are counted on their own: the activity view also shows errors, but
+    the tool list and --tools-only show only tools, and both use --tail.
+    """
     if not isinstance(doc, dict) or "peekHistoryWindow" not in doc:
         return True
     kinds = [item.get("kind") for turn in doc.get("turns") or []
              for item in [*turn.get("input", []), *turn.get("output", [])]
              if isinstance(item, dict)]
-    activity = sum(kind in {"tool-call", "tool-result", "error"} for kind in kinds)
-    return ("user-text" in kinds and "assistant-text" in kinds
-            and activity >= tail)
+    texts = "user-text" in kinds and "assistant-text" in kinds
+    tools = sum(kind in {"tool-call", "tool-result"} for kind in kinds) >= args.tail
+    if args.text_only:
+        return texts
+    if args.tools_only:
+        return tools
+    return texts and tools
 
 
 def _peek_conversation(args, store):
@@ -678,7 +686,7 @@ def _peek_conversation(args, store):
                 owner.worker, max_tool_result_bytes=None if args.full else 4096,
                 **options,
             )
-            if "_recent_claude_turns" not in options or _peek_window_enough(doc, args.tail):
+            if "_recent_claude_turns" not in options or _peek_window_enough(doc, args):
                 break
             options["_recent_claude_turns"] *= 4
         if (not isinstance(doc, dict) or doc.get("schemaVersion") != 5

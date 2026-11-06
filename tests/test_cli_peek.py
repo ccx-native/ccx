@@ -570,3 +570,81 @@ def test_recent_window_label_keeps_partial_ahead_of_source_limited():
     assert doc["completeness"]["sourceLimited"] is True
     assert doc["completeness"]["warnings"] == ["1 malformed line", "recent only"]
     assert doc["turns"][0]["sequence"] is None
+
+
+def _claude_api_error(n, k):
+    return {"type": "assistant", "uuid": f"error-{n}-{k}", "isApiErrorMessage": True,
+            "timestamp": "2026-10-21T00:00:01Z",
+            "message": {"id": f"error-{n}-{k}", "model": "<synthetic>",
+                        "content": [{"type": "text", "text": "API Error: synthetic"}]}}
+
+
+@pytest.fixture
+def read_starts(monkeypatch):
+    from ccx.ops import conversation as conv
+    starts = []
+    real_iter = conv._iter_transcript
+
+    def spy(src, *args, after_offset=0, **kwargs):
+        starts.append(after_offset)
+        return real_iter(src, *args, after_offset=after_offset, **kwargs)
+
+    monkeypatch.setattr(conv, "_iter_transcript", spy)
+    return starts
+
+
+def test_claude_peek_errors_do_not_stand_in_for_tools(original_sources, read_starts, capsys):
+    store, _ = original_sources
+    native = Path(store.record(A)["transcript"])
+    _append_jsonl(native, *_claude_prompt(1, tools=4))
+    for n in (2, 3, 4):
+        rows = _claude_prompt(n)
+        _append_jsonl(native, rows[0], *[_claude_api_error(n, k) for k in range(4)], rows[1])
+    cli._main(["peek", f"claude:{A}", "--json"])
+    default = json.loads(capsys.readouterr().out)
+    assert len(default["tools"]) == 4
+    assert len(read_starts) == 2 and read_starts[-1] == 0
+    cli._main(["peek", f"claude:{A}", "--tools-only", "--json"])
+    tools_only = json.loads(capsys.readouterr().out)
+    assert [item["kind"] for item in tools_only["recent_items"]] == ["tool-call"] * 4
+
+
+def test_claude_peek_text_or_tools_only_stop_at_the_first_window(
+    original_sources, read_starts, capsys,
+):
+    store, _ = original_sources
+    chat = Path(store.record(A)["transcript"])
+    for n in range(1, 6):
+        _append_jsonl(chat, *_claude_prompt(n))
+    cli._main(["peek", f"claude:{A}", "--text-only", "--json"])
+    text = json.loads(capsys.readouterr().out)
+    assert len(read_starts) == 1 and read_starts[0] > 0
+    assert text["last_assistant"]["text"] == "reply 5"
+
+    read_starts.clear()
+    tools = Path(store.record(B)["transcript"])
+    for n in range(1, 6):
+        _append_jsonl(tools, *_claude_prompt(n, reply=False, tools=4))
+    cli._main(["peek", f"claude:{B}", "--tools-only", "--json"])
+    shown = json.loads(capsys.readouterr().out)
+    assert len(read_starts) == 1 and read_starts[0] > 0
+    assert len(shown["recent_items"]) == 4
+
+
+def test_claude_peek_window_keeps_a_result_whose_call_is_older_unpaired(
+    original_sources, capsys,
+):
+    """Accepted window behavior: the call is outside the window, so the result
+    stands alone, marked unpaired and warned about, instead of forcing a full read."""
+    store, _ = original_sources
+    native = Path(store.record(A)["transcript"])
+    first = _claude_prompt(1, tools=1)
+    _append_jsonl(native, first[0], first[1])  # the call, its result arrives later
+    _append_jsonl(native, *_claude_prompt(2), *_claude_prompt(3))
+    _append_jsonl(native, first[2])
+    cli._main(["peek", f"claude:{A}", "--tail", "1", "--json"])
+    window = json.loads(capsys.readouterr().out)
+    assert window["history_window"] == {"kind": "recent", "limit": 2}
+    assert window["tools"][-1]["kind"] == "tool-result"
+    assert window["tools"][-1]["unpaired"] is True
+    assert any("has no unpaired tool_use" in w for w in window["completeness"]["warnings"])

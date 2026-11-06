@@ -924,7 +924,7 @@ def _add_inventory_parsers(sub) -> None:
         ),
     )
     pg.add_argument("target", help=_WORKER_QUERY_HELP)
-    pg.add_argument("--tail", type=int, default=None, help="Only the last N turns. Only those turns are read, so Claude numbers them from 1 and Codex leaves them unnumbered.")
+    pg.add_argument("--tail", type=int, default=None, help="Only the last N turns. Only those turns are read, so they are unnumbered unless they are the whole conversation.")
     pg.add_argument("--format", choices=("conversation", "rendered"), default="conversation",
                     help="conversation (default) or rendered (Claude only: per-turn "
                          "transcript with tool calls paired to their results).")
