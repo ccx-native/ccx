@@ -177,6 +177,22 @@ def _codex_record(short: str) -> dict:
 
 
 
+def _mark_recent_window(document: dict, limit: int, warning: str) -> None:
+    """Label a document that holds only the newest part of a history.
+
+    A bounded tail cannot claim global 1-based turn numbers, nor pretend to
+    describe the complete native history.
+    """
+    for turn in document["turns"]:
+        turn["sequence"] = None
+    complete = document["completeness"]
+    complete["sourceLimited"] = True
+    if complete.get("status") != "partial":  # partial outranks source-limited
+        complete["status"] = "source-limited"
+    complete["warnings"] = [*(complete.get("warnings") or []), warning]
+    document["peekHistoryWindow"] = {"kind": "recent", "limit": limit}
+
+
 def _background_task_block_for_worker(store, owner) -> dict:
     """Bound the original background-task facts for facade wait and report."""
     from ccx.ops.common import background_task_block, recorded_background_facts
@@ -1809,6 +1825,11 @@ class WorkerClient:
                         max_tool_result_bytes=max_tool_result_bytes,
                         before_offset=end_offset, after_offset=after_offset,
                     )
+                    if after_offset > 0:
+                        _mark_recent_window(
+                            document, claude_recent_turns,
+                            f"showing only the turns since the last {claude_recent_turns} "
+                            "user prompts")
                     # Public reference names the verified original pathname;
                     # export uses the still-open native descriptor, not that path.
                     document["nativeArtifacts"][0]["path"] = str(original_path)
@@ -1846,20 +1867,9 @@ class WorkerClient:
                     )
                     if (codex_recent_turns is not None
                             and len(thread.get("turns") or []) >= codex_recent_turns):
-                        # A bounded tail cannot claim global 1-based turn numbers,
-                        # nor pretend to describe the complete native history.
-                        for turn in document["turns"]:
-                            turn["sequence"] = None
-                        complete = document["completeness"]
-                        complete["sourceLimited"] = True
-                        complete["status"] = "source-limited"
-                        complete["warnings"] = [
-                            *(complete.get("warnings") or []),
-                            f"showing only the most recent {codex_recent_turns} native turns",
-                        ]
-                        document["peekHistoryWindow"] = {
-                            "kind": "recent", "limit": codex_recent_turns,
-                        }
+                        _mark_recent_window(
+                            document, codex_recent_turns,
+                            f"showing only the most recent {codex_recent_turns} native turns")
                     # A proven empty history is a synthetic normalization view,
                     # never evidence that a native thread/read actually occurred.
                     native_source = None if known_empty else thread

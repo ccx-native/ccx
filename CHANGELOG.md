@@ -12,12 +12,21 @@ All notable changes to ccx are documented here. The format follows
   reading, so long-lived workers stay fast and use little memory.
 - Steering a busy Claude worker no longer rescans its whole transcript while
   waiting for Claude to accept the message.
+- `ccx peek` on a Claude worker reads only recent turns, as Codex peek
+  already does: the last two prompts, or more when they hold less than peek
+  shows. Turns in that window show no turn number. `--since-turn` still
+  reads the whole history.
+- `ccx report` and `ccx logs --tail` read long transcripts from the end much
+  faster.
 
 ### Fixed
 
 - `ccx stop` on a Claude worker no longer refuses while a steer is waiting
   for the next tool boundary. The turn stops and the steer runs as the next
   turn. It still asks you to retry while a message is being handed to Claude.
+- `ccx logs --tail` on a Claude worker no longer numbers turns from the start
+  of the tail. As with Codex, tail turns carry no turn number and the output
+  is marked source-limited.
 
 ### Removed
 

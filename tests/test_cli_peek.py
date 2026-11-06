@@ -437,3 +437,136 @@ def test_codex_peek_large_history_reads_only_newest_turn_window(
     assert full["turn_count"] == 2
     assert full["last_assistant"]["turn_sequence"] == 20
     assert "history_window" not in full
+
+
+def _claude_prompt(n, *, reply=True, tools=0):
+    rows = [{"type": "user", "uuid": f"user-{n}", "timestamp": "2026-10-21T00:00:00Z",
+             "message": {"role": "user", "content": [{"type": "text", "text": f"question {n}"}]}}]
+    for k in range(tools):
+        call = f"call-{n}-{k}"
+        rows.append({"type": "assistant", "uuid": f"use-{n}-{k}",
+                     "timestamp": "2026-10-21T00:00:01Z",
+                     "message": {"id": f"response-{n}-{k}", "model": "claude-fake",
+                                 "content": [{"type": "tool_use", "id": call, "name": "Bash",
+                                              "input": {"command": "true"}}]}})
+        rows.append({"type": "user", "uuid": f"result-{n}-{k}",
+                     "timestamp": "2026-10-21T00:00:01Z",
+                     "message": {"role": "user", "content": [
+                         {"type": "tool_result", "tool_use_id": call, "content": "ok"}]}})
+    if reply:
+        rows.append({"type": "assistant", "uuid": f"answer-{n}",
+                     "timestamp": "2026-10-21T00:00:01Z",
+                     "message": {"id": f"response-{n}", "model": "claude-fake",
+                                 "usage": {"input_tokens": 1, "output_tokens": 2},
+                                 "content": [{"type": "text", "text": f"reply {n}"}]}})
+    return rows
+
+
+def test_claude_peek_reads_only_the_last_two_prompts(original_sources, monkeypatch, capsys):
+    """Default peek is bounded; explicit since-turn keeps original turn numbers."""
+    from ccx.ops import conversation as conv
+    store, _ = original_sources
+    native = Path(store.record(A)["transcript"])
+    for n in range(1, 6):
+        _append_jsonl(native, *_claude_prompt(n, tools=4))
+    # A fresh prompt still running: the previous reply stays visible.
+    _append_jsonl(native, *_claude_prompt(6, reply=False))
+    starts = []
+    real_iter = conv._iter_transcript
+
+    def spy(src, *args, after_offset=0, **kwargs):
+        starts.append(after_offset)
+        return real_iter(src, *args, after_offset=after_offset, **kwargs)
+
+    monkeypatch.setattr(conv, "_iter_transcript", spy)
+    cli._main(["peek", f"claude:{A}", "--json"])
+    window = json.loads(capsys.readouterr().out)
+    fifth = native.read_bytes().index(b'"user-5"')
+    assert len(starts) == 1 and 0 < starts[0] <= fifth
+    assert window["last_user"]["text"] == "question 6"
+    assert window["last_assistant"]["text"] == "reply 5"
+    assert window["turn_count"] == 2
+    assert window["last_assistant"]["turn_sequence"] is None
+    assert window["history_window"] == {"kind": "recent", "limit": 2}
+    assert window["completeness"]["status"] == "source-limited"
+    assert window["completeness"]["sourceLimited"] is True
+
+    cli._main(["peek", f"claude:{A}"])
+    text = capsys.readouterr().out
+    assert "recent turn ordinal" in text
+    assert "showing only the turns since the last 2 user prompts" in text
+
+    starts.clear()
+    cli._main(["peek", f"claude:{A}", "--since-turn", "5", "--json"])
+    full = json.loads(capsys.readouterr().out)
+    assert starts == [0]
+    assert full["turn_count"] == 2
+    assert full["last_assistant"]["turn_sequence"] == 5
+    assert "history_window" not in full
+    assert full["completeness"]["status"] == "complete"
+
+
+def test_claude_peek_widens_the_window_until_it_holds_the_tail(
+    original_sources, monkeypatch, capsys,
+):
+    from ccx.ops import conversation as conv
+    store, _ = original_sources
+    native = Path(store.record(A)["transcript"])
+    for n in range(1, 12):
+        _append_jsonl(native, *_claude_prompt(n, tools=2))
+    starts = []
+    real_iter = conv._iter_transcript
+
+    def spy(src, *args, after_offset=0, **kwargs):
+        starts.append(after_offset)
+        return real_iter(src, *args, after_offset=after_offset, **kwargs)
+
+    monkeypatch.setattr(conv, "_iter_transcript", spy)
+    cli._main(["peek", f"claude:{A}", "--tail", "10", "--json"])
+    widened = json.loads(capsys.readouterr().out)
+    data = native.read_bytes()
+    row = len(b'{"type": "user", "uuid": ')
+    # 2 prompts hold 4 tool calls; 8 prompts hold the 10 asked for.
+    assert starts == [data.index(b'"user-10"') - row, data.index(b'"user-4"') - row]
+    assert widened["history_window"] == {"kind": "recent", "limit": 8}
+    assert len(widened["tools"]) == 10
+    assert widened["last_assistant"]["text"] == "reply 11"
+
+    # Replies without any tool work widen to the whole (short) history.
+    starts.clear()
+    other = Path(store.record(B)["transcript"])
+    for n in range(1, 4):
+        _append_jsonl(other, *_claude_prompt(n))
+    cli._main(["peek", f"claude:{B}", "--json"])
+    chat = json.loads(capsys.readouterr().out)
+    assert starts[-1] == 0 and "history_window" not in chat
+    assert chat["last_assistant"]["text"] == "reply 3"
+
+
+def test_claude_logs_tail_does_not_number_turns_from_the_window(original_sources, capsys):
+    store, _ = original_sources
+    native = Path(store.record(A)["transcript"])
+    for n in range(1, 6):
+        _append_jsonl(native, *_claude_prompt(n))
+    cli._main(["logs", f"claude:{A}", "--tail", "2"])
+    doc = json.loads(capsys.readouterr().out)
+    assert [turn["sequence"] for turn in doc["turns"]] == [None, None]
+    assert [turn["input"][0]["text"] for turn in doc["turns"]] == ["question 4", "question 5"]
+    assert doc["completeness"]["status"] == "source-limited"
+    assert doc["peekHistoryWindow"] == {"kind": "recent", "limit": 2}
+
+    cli._main(["logs", f"claude:{A}", "--tail", "9"])
+    doc = json.loads(capsys.readouterr().out)
+    assert [turn["sequence"] for turn in doc["turns"]] == [1, 2, 3, 4, 5]
+    assert doc["completeness"]["status"] == "complete"
+
+
+def test_recent_window_label_keeps_partial_ahead_of_source_limited():
+    from ccx.workers import _mark_recent_window
+    doc = {"turns": [{"sequence": 3}],
+           "completeness": {"status": "partial", "warnings": ["1 malformed line"]}}
+    _mark_recent_window(doc, 2, "recent only")
+    assert doc["completeness"]["status"] == "partial"
+    assert doc["completeness"]["sourceLimited"] is True
+    assert doc["completeness"]["warnings"] == ["1 malformed line", "recent only"]
+    assert doc["turns"][0]["sequence"] is None

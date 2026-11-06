@@ -644,6 +644,18 @@ def _background_summary_line(summary: dict | None) -> str | None:
             f"subagent={kinds.get('subagent', 0)}")
 
 
+def _peek_window_enough(doc, tail: int) -> bool:
+    """A recent window holds what peek shows, or there is no older history."""
+    if not isinstance(doc, dict) or "peekHistoryWindow" not in doc:
+        return True
+    kinds = [item.get("kind") for turn in doc.get("turns") or []
+             for item in [*turn.get("input", []), *turn.get("output", [])]
+             if isinstance(item, dict)]
+    activity = sum(kind in {"tool-call", "tool-result", "error"} for kind in kinds)
+    return ("user-text" in kinds and "assistant-text" in kinds
+            and activity >= tail)
+
+
 def _peek_conversation(args, store):
     """Project one original schema-5 snapshot for the CLI, without native writes."""
     from ccx.store.root import GenerationError
@@ -653,14 +665,22 @@ def _peek_conversation(args, store):
     try:
         owner = store.resolve(args.target)
         options = {}
+        # Peek shows only recent items, so it reads a recent tail. An explicit
+        # --since-turn keeps the complete history path for original turn numbers.
         if owner.engine == "codex" and args.since_turn is None:
-            # Only peek needs a recent tail. An explicit --since-turn keeps
-            # the complete history path for unambiguous original ordinals.
             options["_recent_codex_turns"] = min(64, max(12, args.tail * 2 + 4))
-        doc = WorkerClient().conversation(
-            owner.worker, max_tool_result_bytes=None if args.full else 4096,
-            **options,
-        )
+        elif args.since_turn is None:
+            # Claude prompts can each span many MB of tool work, so start from
+            # the last two and widen only until peek has everything it shows.
+            options["_recent_claude_turns"] = 2
+        while True:
+            doc = WorkerClient().conversation(
+                owner.worker, max_tool_result_bytes=None if args.full else 4096,
+                **options,
+            )
+            if "_recent_claude_turns" not in options or _peek_window_enough(doc, args.tail):
+                break
+            options["_recent_claude_turns"] *= 4
         if (not isinstance(doc, dict) or doc.get("schemaVersion") != 5
                 or not isinstance(doc.get("worker"), dict)
                 or doc["worker"].get("handle") != owner.worker

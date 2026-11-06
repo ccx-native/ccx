@@ -652,31 +652,32 @@ def _reverse_lines(
     """Yield (start offset, raw line) backwards from a certified source fence.
 
     The pinned reader uses pread, not the mutable native pathname or shared fd
-    seek position. The buffer also handles JSONL rows larger than a read block.
+    seek position. A row longer than a read block is collected piece by piece
+    and joined once, so a multi-MB row costs its size, not its size squared.
     """
     try:
         reader = (path.open_reader() if isinstance(path, PinnedNativeSource)
                   else open(path, "rb"))
         with reader as handle:
             position = before_offset
-            suffix = b""
+            pieces: list[bytes] = []  # the current row's tail, newest piece first
             while position > 0:
                 size = min(block_size, position)
                 position -= size
                 handle.seek(position)
-                data = handle.read(size) + suffix
-                parts = data.split(b"\n")
-                if position > 0:
-                    suffix = parts[0]
-                    parts = parts[1:]
-                else:
-                    suffix = b""
-                end = position + len(data)
-                for raw in reversed(parts):
-                    start = end - len(raw)
+                data = handle.read(size)
+                cut = len(data)
+                while (newline := data.rfind(b"\n", 0, cut)) >= 0:
+                    pieces.append(data[newline + 1:cut])
+                    raw = b"".join(reversed(pieces))
+                    pieces = []
                     if raw:
-                        yield start, raw
-                    end = start - 1
+                        yield position + newline + 1, raw
+                    cut = newline
+                pieces.append(data[:cut])
+            raw = b"".join(reversed(pieces))
+            if raw:
+                yield 0, raw
     except FileNotFoundError:
         return
 

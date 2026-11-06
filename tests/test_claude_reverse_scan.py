@@ -355,3 +355,38 @@ if __name__ == "__main__" and sys.argv[1:] == ["--benchmark"]:
         print(f"{label}: samples_ms={[round(x, 1) for x in samples]}, "
               f"median_ms={sorted(samples)[1]:.1f}, "
               f"records={len(page['records'])}, cursor={bool(page['older_cursor'])}")
+
+
+@pytest.mark.parametrize("block_size", [1, 7, 64, 4096])
+def test_reverse_lines_match_a_forward_split_with_rows_longer_than_blocks(tmp_path, block_size):
+    import random
+    rng = random.Random(block_size)
+    rows = [b"x" * rng.choice([0, 1, 5, 63, 64, 65, 300, 5000]) for _ in range(60)]
+    body = b"\n".join(rows) + b"\n"
+    path = tmp_path / "rows.jsonl"
+    path.write_bytes(body + b"partial-line-without-newline")
+    expected = []
+    position = 0
+    for row in rows:
+        if row:
+            expected.append((position, row))
+        position += len(row) + 1
+    expected.reverse()
+    assert list(P._reverse_lines(str(path), before_offset=len(body),
+                                 block_size=block_size)) == expected
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        pinned = P.PinnedNativeSource(fd)
+        assert list(P._reverse_lines(pinned, before_offset=len(body),
+                                     block_size=block_size)) == expected
+    finally:
+        os.close(fd)
+    # Any fence, including one inside a row, ends the scan at that byte.
+    for cut in (1, len(body) // 3, len(body) - 2):
+        forward, position = [], 0
+        for row in body[:cut].split(b"\n"):
+            if row:
+                forward.append((position, row))
+            position += len(row) + 1
+        assert list(P._reverse_lines(str(path), before_offset=cut,
+                                     block_size=block_size)) == forward[::-1]
