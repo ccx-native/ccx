@@ -27,6 +27,11 @@ All notable changes to ccx are documented here. The format follows
 - `ccx logs --tail` on a Claude worker no longer numbers turns from the start
   of the tail. As with Codex, tail turns carry no turn number and the output
   is marked source-limited.
+- On a busy machine, Codex commands no longer fail with "codexd presence is
+  inconclusive" after one slow reply from codexd. CCX keeps asking until the
+  command's time budget runs out, and the error says how long it waited.
+  It still never starts a second codexd while it cannot tell whether one is
+  running.
 
 ### Removed
 

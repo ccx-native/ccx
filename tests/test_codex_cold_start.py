@@ -59,7 +59,7 @@ def test_ensure_daemon_waits_for_transitional_first_boot_without_spawning(monkey
     monkeypatch.setattr(codex_runtime, "ensure_dirs", lambda: None)
     monkeypatch.setattr(codex_runtime, "settled_daemon_status", lambda deadline: next(checks))
     monkeypatch.setattr(codex_runtime, "daemon_spawn_lock", same_spawn_lock)
-    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout: response)
+    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout, **_: response)
     monkeypatch.setattr(codex_runtime.subprocess, "Popen", lambda *a, **k: pytest.fail(
         "a transitional singleton must never launch another daemon"))
     result = codex_runtime.ensure_daemon(time.monotonic() + 4)

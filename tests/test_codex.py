@@ -113,7 +113,7 @@ def test_codex_history_read_refuses_an_incompatible_running_daemon(
     monkeypatch, tmp_path
 ):
     """Observation must not quietly start a second app-server to dodge this."""
-    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2: {
+    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2, **_: {
         "ok": True, "state": "ready", "rpcGeneration": 0, "transport": "served"
     })
     monkeypatch.setattr(
@@ -130,7 +130,7 @@ def test_codex_history_read_keeps_a_broad_invalid_request_unavailable(
     monkeypatch,
 ):
     """Codex answers a malformed id with the same -32600 as a missing one."""
-    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2: {
+    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2, **_: {
         "ok": True, "state": "ready", "rpcGeneration": CODEXD_RPC_GENERATION, "transport": "served"
     })
     monkeypatch.setattr(
@@ -502,7 +502,7 @@ def test_codex_runtime_cold_thread_read_uses_temporary_client(
         def close(self):
             calls.append(("close",))
 
-    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2: {
+    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2, **_: {
         "ok": False, "error": "codexd unavailable", "transport": "absent"
     })
     monkeypatch.setattr(codex_runtime, "AppServerClient", TemporaryClient)
@@ -522,7 +522,7 @@ def test_codex_runtime_cold_read_launches_in_an_existing_worker_cwd(
     monkeypatch, tmp_path
 ):
     launches = []
-    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2: {
+    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2, **_: {
         "ok": False, "transport": "absent"
     })
     monkeypatch.setattr(
@@ -539,7 +539,7 @@ def test_codex_runtime_cold_read_launches_in_an_existing_worker_cwd(
 def test_codex_runtime_running_thread_read_maps_thread_not_loaded_to_not_found(
     monkeypatch,
 ):
-    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2: {
+    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2, **_: {
         "ok": True, "state": "ready", "rpcGeneration": CODEXD_RPC_GENERATION, "transport": "served"
     })
     monkeypatch.setattr(
@@ -586,7 +586,7 @@ def test_codex_runtime_cold_thread_read_maps_thread_not_loaded_to_not_found(
         def close(self):
             pass
 
-    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2: {
+    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2, **_: {
         "ok": False, "transport": "absent"
     })
     monkeypatch.setattr(codex_runtime, "AppServerClient", MissingClient)
@@ -615,7 +615,7 @@ def test_codex_runtime_cold_thread_read_keeps_transport_failure_unavailable(
         def close(self):
             pass
 
-    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2: {
+    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2, **_: {
         "ok": False, "transport": "absent"
     })
     monkeypatch.setattr(codex_runtime, "AppServerClient", BrokenClient)
@@ -923,7 +923,7 @@ def test_cold_codex_paths_share_stable_appserver_lifecycle(
             self.closed = True
 
     monkeypatch.setattr(codex_runtime, "AppServerClient", LifecycleClient)
-    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2: {
+    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2, **_: {
         "ok": False, "transport": "absent"
     })
 
@@ -986,7 +986,7 @@ def test_cold_codex_paths_close_short_lived_client_on_failure(
             self.closed = True
 
     monkeypatch.setattr(codex_runtime, "AppServerClient", BrokenClient)
-    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2: {
+    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2, **_: {
         "ok": False, "transport": "absent"
     })
 

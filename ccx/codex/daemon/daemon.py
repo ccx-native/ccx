@@ -780,7 +780,9 @@ class CodexDaemon:
         op = message.get("op")
         if op == "daemon-status":
             with self.lock:
-                workers = {
+                # A presence probe needs no worker states, and each takes
+                # that worker's lock, which a slow disk write can hold.
+                workers = None if message.get("workers") is False else {
                     short: worker.state()
                     for short, worker in self.workers.items()
                 }

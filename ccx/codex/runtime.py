@@ -54,6 +54,8 @@ CODEXD_BOOT_TIMEOUT_S = 60
 # How long a caller without a deadline waits for a stopping codexd to exit. Its
 # shutdown closes the app-server (up to three 3s waits) before it lets go.
 CODEXD_STOP_WAIT_S = 15
+# One presence probe's reply budget; a slower one is retried, not refused.
+PRESENCE_PROBE_S = 5
 
 
 @contextmanager
@@ -233,7 +235,7 @@ def observation_daemon(
             return False
         if transport != RUNTIME_SERVED:
             raise SessionUnavailable(
-                "codexd presence is inconclusive; no second app-server was started",
+                inconclusive_presence(probe, "no second app-server was started"),
                 short=short or "codexd",
             )
         require_compatible_daemon(probe, short=short)
@@ -292,8 +294,15 @@ def _lifetime_lock_held() -> bool | None:
 
 def _transport_failure(error: BaseException) -> dict[str, Any]:
     """Classify a failed socket observation without confusing timeout with absence."""
-    if isinstance(error, (TimeoutError, socket.timeout)):
-        presence = RUNTIME_INCONCLUSIVE
+    if isinstance(error, (TimeoutError, socket.timeout, EOFError)):
+        # A busy machine or a daemon mid-exit: unknown, but worth asking again
+        # inside the caller's budget. Never evidence of absence.
+        return {
+            "ok": False,
+            "error": f"codexd unavailable: {error.__class__.__name__}",
+            "transport": RUNTIME_INCONCLUSIVE,
+            "retry": True,
+        }
     elif isinstance(error, OSError) and getattr(error, "errno", None) in {
         2,  # ENOENT: no socket file
         32,  # EPIPE: the listener closed under the request
@@ -536,7 +545,8 @@ def preflight_daemon(
         return probe
     if probe.get("transport") != RUNTIME_SERVED:
         raise SessionUnavailable(
-            "codexd presence is inconclusive", short=short or "codexd"
+            inconclusive_presence(probe, "nothing was sent"),
+            short=short or "codexd",
         )
     require_compatible_daemon(probe, short=short)
     return None
@@ -569,9 +579,16 @@ def rpc(
     )
 
 
-def daemon_status(timeout: float = 2) -> dict[str, Any]:
-    """Probe the daemon. Deliberately unchecked: status is a recovery tool."""
-    return daemon_rpc({"op": "daemon-status"}, timeout=timeout)
+def daemon_status(timeout: float = 2, *, presence_only: bool = False) -> dict[str, Any]:
+    """Probe the daemon. Deliberately unchecked: status is a recovery tool.
+
+    ``presence_only`` skips the per-worker states, which take every worker's
+    lock; a daemon that predates the flag ignores it and lists them anyway.
+    """
+    message: dict[str, Any] = {"op": "daemon-status"}
+    if presence_only:
+        message["workers"] = False
+    return daemon_rpc(message, timeout=timeout)
 
 
 def _stopping(probe: dict[str, Any]) -> bool:
@@ -584,22 +601,37 @@ def _stopping(probe: dict[str, Any]) -> bool:
 
 
 def settled_daemon_status(deadline: float | None) -> dict[str, Any]:
-    """Probe the daemon, waiting out one that is binding or shutting down.
+    """Probe the daemon, waiting out one that is slow, binding or shutting down.
 
     A stopping codexd refuses new loads and is about to release the runtime,
-    so neither "use it" nor "start another" is right yet. Waiting is bounded by
-    the caller's deadline (or ``CODEXD_STOP_WAIT_S``); what is still
-    transitional then is returned as the inconclusive probe it is.
+    so neither "use it" nor "start another" is right yet; a probe that timed
+    out says nothing either way. Both are asked again until the caller's
+    deadline (or ``CODEXD_STOP_WAIT_S``); what is still unknown then is
+    returned as the inconclusive probe it is, with how long it was waited for.
     """
-    limit = (
-        deadline if deadline is not None
-        else time.monotonic() + CODEXD_STOP_WAIT_S
-    )
+    started = time.monotonic()
+    limit = deadline if deadline is not None else started + CODEXD_STOP_WAIT_S
+    attempts = 0
     while True:
-        probe = daemon_status(timeout=max(0.25, remaining(deadline, 1)))
-        if not _stopping(probe) or time.monotonic() >= limit:
+        attempts += 1
+        probe = daemon_status(timeout=remaining(limit, PRESENCE_PROBE_S),
+                              presence_only=True)
+        now = time.monotonic()
+        if not (_stopping(probe) or probe.get("retry")) or now >= limit:
+            if probe.get("transport") == RUNTIME_INCONCLUSIVE:
+                probe = {**probe, "attempts": attempts,
+                         "waitedSeconds": round(now - started, 1)}
             return probe
-        time.sleep(min(0.05, max(0.0, limit - time.monotonic())))
+        time.sleep(min(0.1, max(0.0, limit - now)))
+
+
+def inconclusive_presence(probe: dict[str, Any], outcome: str) -> str:
+    """The refusal for a presence probe that never settled, with its evidence."""
+    error = str(probe.get("error") or "no reply").removeprefix("codexd unavailable: ")
+    attempts = probe.get("attempts") or 1
+    tried = (f" after {attempts} probes over {probe.get('waitedSeconds')}s"
+             if attempts > 1 else "")
+    return f"codexd presence is inconclusive ({error}{tried}); {outcome}"
 
 
 def observe_worker(
@@ -1198,7 +1230,7 @@ def ensure_daemon(deadline: float | None = None) -> dict[str, Any]:
         probe.get("transport") == RUNTIME_INCONCLUSIVE and probe.get("transitional")
     ):
         raise SessionUnavailable(
-            "codexd presence is inconclusive; refusing to start a second daemon",
+            inconclusive_presence(probe, "refusing to start a second daemon"),
             short="codexd",
         )
     with daemon_spawn_lock(deadline):
@@ -1211,7 +1243,7 @@ def ensure_daemon(deadline: float | None = None) -> dict[str, Any]:
             "transitional"
         ):
             raise SessionUnavailable(
-                "codexd presence is inconclusive; refusing to start a second daemon",
+                inconclusive_presence(probe, "refusing to start a second daemon"),
                 short="codexd",
             )
         process = None

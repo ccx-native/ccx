@@ -439,7 +439,7 @@ def test_shutdown_older_codexd_uses_only_generation_agnostic_teardown(
     state = {"running": True}
     calls = []
 
-    def old_status(timeout=2):
+    def old_status(timeout=2, **_):
         calls.append(("status", timeout))
         return old_registry if state["running"] else {
             "ok": False, "transport": "absent", "error": "no daemon",
@@ -518,7 +518,7 @@ def test_shutdown_does_not_force_unverified_codexd_generation(
     short_root, monkeypatch, reply,
 ):
     _root(monkeypatch, short_root)
-    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2: reply)
+    monkeypatch.setattr(codex_runtime, "daemon_status", lambda timeout=2, **_: reply)
     monkeypatch.setattr(
         codex_runtime, "daemon_stop",
         lambda **kw: pytest.fail("unverified generation reached force teardown"),
