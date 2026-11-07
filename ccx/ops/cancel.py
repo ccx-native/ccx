@@ -78,7 +78,13 @@ def cancel_turn(
                                 short=worker_id[:8], worker_id=worker_id)
     # In particular, an invented native id is never a cancel capability.
     if engine == "codex":
-        opening = codex_receipt_for_turn(handle, native_turn_id)
+        from ccx.codex.delivery import DeliveryReceiptError
+        try:
+            opening = codex_receipt_for_turn(handle, native_turn_id)
+        except DeliveryReceiptError:
+            # A damaged receipt somewhere proves nothing about this turn;
+            # the live exact turn below still decides, as with no receipt.
+            opening = None
     else:
         from ccx.claude.delivery import iter_receipts
         opening = next((row for row in iter_receipts(handle)
@@ -86,14 +92,11 @@ def cancel_turn(
                         and row.get("route") == "new_turn"), None)
     if prior is None and (not isinstance(opening, dict)
                           or opening.get("state") != "accepted"):
-        # Human input on the shared managed Claude PTY starts a genuine parent
-        # turn without a CCX delivery receipt. Do not fabricate one: the live
-        # authenticated host's exact activeTurnRef is sufficient to request a
-        # one-shot native Escape, under the same durable cancel intent. This
-        # exception never applies to Codex or an absent/invented/stale turn.
-        if engine != "claude":
-            raise DeliveryRejected("exact active turn has no original accepted delivery receipt",
-                                   short=worker_id[:8])
+        # Some genuine turns start without a CCX delivery receipt: human input
+        # on the shared managed Claude PTY, or a parent notification on Codex.
+        # Do not fabricate one: the live authenticated runtime's exact active
+        # turn is sufficient to request a one-shot native interrupt, under the
+        # same durable cancel intent. An absent/invented/stale turn is refused.
         known, active = _cancel_live_turn(handle, engine, worker_id)
         store.revalidate()
         if not known or active != turn_ref:
@@ -127,8 +130,12 @@ def cancel_turn(
             return None
 
         if engine == "codex":
-            seen = reconcile_turn(handle, turn_id=native_turn_id,
-                                  expected_generation=store.generation)
+            from ccx.codex.delivery import DeliveryReceiptError
+            try:
+                seen = reconcile_turn(handle, turn_id=native_turn_id,
+                                      expected_generation=store.generation)
+            except DeliveryReceiptError:
+                seen = {}  # no receipt evidence; the live turn below decides
             if seen.get("status") == "settled":
                 return public("confirmed", outcome="completed", owned=True,
                               receipt=receipt)

@@ -10,7 +10,7 @@ from ccx.codex import evidence as codex_evidence
 from ccx.codex import runtime as codex_runtime
 from ccx import constants
 from ccx.ops import common as protocol_ops
-from ccx.errors import InvalidRequest, SessionNotFound, SessionUnavailable
+from ccx.errors import InvalidRequest, OperationConflict, SessionNotFound, SessionUnavailable
 from ccx.store.store import GenerationStore
 from test_generation_store import A, short_root
 from test_notify_claude import owners
@@ -354,16 +354,23 @@ def test_public_receipt_authority_negative_and_receipt_backed_zero(
         return thread
     monkeypatch.setattr(codex_runtime, "read_thread", native_history)
 
-    # An owned steer names this R through targetTurnId even before its
-    # receipt has a turnRef. It must prevent receiptless native bypass.
+    # A steer into R, even an uncertain one, only joins R: it never opened R
+    # and never receives R's settlement. R is reported from its exact native
+    # history, which claims nothing about the steer.
     pending_steer = "owned-target-turn-unreconciled"
     codex_delivery.prepare("codex:" + wid, pending_steer,
                            "steer input uncertain", mode="steer_only")
     codex_delivery.mark_owned("codex:" + wid, pending_steer,
                               route_kind="steer", target_turn_id="native-turn-1")
-    with pytest.raises(SessionUnavailable, match="not confirmed complete"):
-        ops_report.report_worker("codex:" + wid, turn_ref=ref)
-    assert reads == []
+    steered = ops_report.report_worker("codex:" + wid, turn_ref=ref)
+    assert steered["text"] == "original model final"
+    assert steered["source"] == "original-native-exact-turn"
+    assert steered["delivery_id"] is None
+    assert reads == [wid]
+    codex_delivery.mark_submitted("codex:" + wid, pending_steer)
+    codex_delivery.mark_accepted("codex:" + wid, pending_steer, turn_id="native-turn-1")
+    assert ops_report.report_worker("codex:" + wid, turn_ref=ref)["delivery_id"] is None
+    reads.clear()
 
     # A live/unknown SEND receipt naming R retains its OWN authority.
     # A matching native completed R must not silently resolve that receipt.
@@ -421,3 +428,68 @@ def test_public_receipt_authority_negative_and_receipt_backed_zero(
     with pytest.raises(SessionUnavailable):
         ops_report.report_worker(
             "codex:" + wid, turn_ref="ccx-turn:codex:v1:unknown-native")
+
+
+@pytest.mark.parametrize("journal", ["none", "other-turn-only", "started-only",
+                                     "interrupted", "other-thread"])
+def test_codex_exact_report_survives_journal_gaps_but_not_contradictions(
+    original_codex, monkeypatch, journal,
+):
+    """A local journal gap is no evidence against R; native history decides.
+
+    The journal still vetoes when it says something else about R itself.
+    """
+    store, _cwd, wid, native_id = original_codex
+    ref = "ccx-turn:codex:v1:native-turn-7"
+    log = codex_evidence.EvidenceJournal(wid)
+    if journal == "other-turn-only":
+        log.record("turn/completed", {"turn": {"id": "native-turn-6",
+                                                "status": "completed"}},
+                   thread_id=native_id)
+    elif journal == "started-only":  # R's completion notification was missed
+        log.record("turn/started", {"turn": {"id": "native-turn-7"}},
+                   thread_id=native_id)
+    elif journal == "interrupted":
+        log.record("turn/completed", {"turn": {"id": "native-turn-7",
+                                                "status": "interrupted"}},
+                   thread_id=native_id)
+    elif journal == "other-thread":
+        log.record("turn/completed", {"turn": {"id": "native-turn-7",
+                                                "status": "completed"}},
+                   thread_id="another-thread")
+    log.close()
+    thread = {
+        "id": native_id, "threadSource": f"ccx-worker:{wid}",
+        "turns": [{"id": "native-turn-7", "status": "completed",
+                   "items": [{"type": "agentMessage", "phase": "final_answer",
+                              "text": "native R7 final"}]}],
+    }
+    monkeypatch.setattr(codex_runtime, "read_thread",
+                        lambda *_a, **_k: thread)
+
+    if journal in ("none", "other-turn-only", "started-only"):
+        report = ops_report.report_worker("codex:" + wid, turn_ref=ref)
+        assert report["text"] == "native R7 final"
+        assert report["source"] == "original-native-exact-turn"
+        if journal == "started-only":
+            thread["turns"][0]["status"] = "inProgress"
+            with pytest.raises(OperationConflict, match="wait before reporting"):
+                ops_report.report_worker("codex:" + wid, turn_ref=ref)
+    else:
+        with pytest.raises(SessionUnavailable, match="completion record is missing"):
+            ops_report.report_worker("codex:" + wid, turn_ref=ref)
+
+
+def test_codex_exact_report_never_reports_a_native_compaction_turn(
+    original_codex, monkeypatch,
+):
+    store, _cwd, wid, native_id = original_codex
+    thread = {
+        "id": native_id, "threadSource": f"ccx-worker:{wid}",
+        "turns": [{"id": "native-turn-8", "status": "completed",
+                   "items": [{"type": "contextCompaction", "id": "c1"}]}],
+    }
+    monkeypatch.setattr(codex_runtime, "read_thread", lambda *_a, **_k: thread)
+    with pytest.raises(SessionUnavailable, match="Completed Codex turn is unavailable"):
+        ops_report.report_worker("codex:" + wid,
+                                 turn_ref="ccx-turn:codex:v1:native-turn-8")

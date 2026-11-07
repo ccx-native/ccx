@@ -51,7 +51,7 @@ def cmd_stop(args):
         "cancelled": result["confirmed"] and result["outcome"] == "interrupted",
     }
     print(json.dumps(value) if getattr(args, "json", False)
-          else (f"{result['worker']['worker']}: stop confirmed; turn outcome unknown until Claude settles"
+          else (f"{result['worker']['worker']}: stop confirmed; the turn is no longer running, outcome unknown"
                 if result["confirmed"] and result["outcome"] == "unknown"
                 else f"{result['worker']['worker']}: stop {result['status']}; turn outcome {result['outcome']}"))
 

@@ -417,12 +417,14 @@ def report_worker(
                     if engine == "codex" else claude_delivery.iter_receipts(handle))
     from ccx.ops import turn_reports
     native_turn = turn_reports._ref_id(turn_ref, engine=engine)
+    # A Codex steer only joins a turn it did not open and never gets that
+    # turn's settlement, so it is no claim on the turn's report: without an
+    # opening receipt, the turn is reported from its exact native history.
     has_receipt = any(
-        row.get("turnRef") == turn_ref
-        or (engine == "claude" and row.get("targetTurnRef") == turn_ref)
-        or (engine == "codex" and native_turn in (
-            row.get("turnId"), row.get("targetTurnId")
-        ))
+        (row.get("turnRef") == turn_ref
+         or (engine == "claude" and row.get("targetTurnRef") == turn_ref)
+         or (engine == "codex" and row.get("turnId") == native_turn))
+        and not (engine == "codex" and codex_delivery.route(row) == "steer")
         for row in receipts
     )
     if not has_receipt:
@@ -466,6 +468,7 @@ def report_worker(
         for candidate in receipts:
             if (candidate.get("state") == "accepted"
                     and not candidate.get("settlement")
+                    and codex_delivery.route(candidate) != "steer"
                     and candidate.get("turnRef") == turn_ref):
                 reconcile_turn(
                     handle, delivery_id=candidate["deliveryId"],

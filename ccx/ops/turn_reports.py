@@ -167,6 +167,34 @@ def codex_native_turn_evidence(
     return {"status": terminals[0]["status"], "error": terminals[0].get("error")}
 
 
+def _codex_journal_contradicts(
+    child: str, record: dict, thread_id: str, turn_id: str,
+) -> bool:
+    """Does the local journal say anything against R being a completed turn?
+
+    Missing evidence (a gap elsewhere in the journal, or none for R) is not a
+    contradiction; another thread, a compaction or a non-completed terminal is.
+    """
+    from ccx.codex.evidence import build_index, read_journal
+
+    if ((record.get("activeCompact") or {}).get("turnId") == turn_id
+            or (record.get("lastCompact") or {}).get("turnId") == turn_id):
+        return True
+    journal = read_journal(child)
+    index = build_index(journal, health=record.get("evidence"))
+    if any(item.get("itemType") == "contextCompaction"
+           for item in index["items"].get(turn_id, {}).values()):
+        return True
+    events = [event for event in journal.events if event.get("turnId") == turn_id]
+    if any(event.get("threadId") != thread_id for event in events):
+        return True
+    return any(
+        not isinstance(turn, dict) or turn.get("id") != turn_id
+        or turn.get("status") != "completed"
+        for turn in ((event.get("params") or {}).get("turn") for event in events
+                     if event.get("method") == "turn/completed"))
+
+
 def codex_source_report(
     thread: dict, worker_id: str, thread_id: str, turn_id: str,
     *, expected_source: str,
@@ -177,7 +205,9 @@ def codex_source_report(
         raise SessionUnavailable("Codex conversation belongs to another worker; check the worker")
     turns = [turn for turn in (thread.get("turns") or [])
              if isinstance(turn, dict) and turn.get("id") == turn_id]
-    if len(turns) != 1 or turns[0].get("status") != "completed":
+    if (len(turns) != 1 or turns[0].get("status") != "completed"
+            or any(isinstance(item, dict) and item.get("type") == "contextCompaction"
+                   for item in turns[0].get("items") or [])):
         raise SessionUnavailable("Completed Codex turn is unavailable; inspect worker status")
     selected = report_from_turn(turns[0])
     return {
@@ -287,10 +317,22 @@ def exact_report(
         result["completed_at"] = terminal.get("settledAtMs")
     elif owner.engine == "codex":
         proof = codex_native_turn_evidence(child, record, original, turn_id)
-        if proof is None:
-            raise SessionUnavailable("Codex completion record is missing; check status")
-        if proof["status"] is None:
-            raise OperationConflict("Codex turn is not complete; wait before reporting")
+        if proof is None or proof["status"] is None:
+            # The local journal cannot prove R: a gap elsewhere in it, or R's
+            # completion was missed. Unless it contradicts R, the exact
+            # source-verified native history decides: codex_source_report
+            # needs R itself completed there, and says so when it is not.
+            started = proof is not None
+            native_done = isinstance(thread, dict) and any(
+                isinstance(turn, dict) and turn.get("id") == turn_id
+                and turn.get("status") == "completed"
+                for turn in thread.get("turns") or [])
+            if (thread is None or (started and not native_done)
+                    or _codex_journal_contradicts(child, record, original, turn_id)):
+                if started:
+                    raise OperationConflict("Codex turn is not complete; wait before reporting")
+                raise SessionUnavailable("Codex completion record is missing; check status")
+            proof = {"status": "completed"}
         if proof["status"] != "completed":
             raise SessionUnavailable("Codex turn ended without completion; inspect worker status")
         if thread is None:

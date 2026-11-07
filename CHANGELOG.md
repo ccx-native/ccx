@@ -32,6 +32,15 @@ All notable changes to ccx are documented here. The format follows
   command's time budget runs out, and the error says how long it waited.
   It still never starts a second codexd while it cannot tell whether one is
   running.
+- `ccx stop` now stops a Codex turn that a notification started. CCX checks
+  that it is the worker's live turn, as it already did for Claude, instead
+  of refusing because no `ccx send` started it. A damaged record of an older
+  message no longer blocks it either.
+- Reporting one exact Codex turn (`report(turn_ref=...)` in Python) no
+  longer refuses with "not confirmed complete" when the turn was steered
+  and no `ccx send` started it. It also no longer refuses for a gap in CCX's
+  local record of the worker: Codex's own history of that exact turn is
+  enough, unless the record says the turn ended differently.
 
 ### Removed
 

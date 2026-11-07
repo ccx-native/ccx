@@ -2161,31 +2161,32 @@ class Worker:
                 return failure
 
         if op == "interrupt":
+            # The notification reader publishes a successor turn under the
+            # worker lock, so read state, turn and thread together once and
+            # interrupt exactly the turn that was checked.
+            with self.lock:
+                state = self.record["lifecycle"]["state"]
+                turn_id = self.record["lifecycle"].get("activeTurnId")
+                # Full-UUID records keep the original thread under native.threadId.
+                native = self.record.get("native") or {}
+                thread_id = native.get("threadId") or self.record.get("threadId")
             expected_turn_id = message.get("expectedTurnId")
-            current_turn_id = self.record["lifecycle"].get("activeTurnId")
-            if (
-                expected_turn_id is not None
-                and expected_turn_id != current_turn_id
-            ):
+            if expected_turn_id is not None and expected_turn_id != turn_id:
                 return {
                     "ok": False,
                     "error": "active turn changed",
                     "state": state,
-                    "turnId": current_turn_id,
+                    "turnId": turn_id,
                     "definitive": True,
                 }
             if state not in {"busy", "waiting"}:
                 return {"ok": False, "definitive": True,
                         "error": "no active turn", "state": state}
-            turn_id = self.record["lifecycle"].get("activeTurnId")
             if not turn_id:
                 return {"ok": False, "definitive": True,
                         "error": "active turn id is unavailable", "state": state}
-            # Full-UUID records keep the original thread under native.threadId.
-            native = self.record.get("native") or {}
             self.client.request("turn/interrupt", {
-                "threadId": native.get("threadId") or self.record["threadId"],
-                "turnId": turn_id,
+                "threadId": thread_id, "turnId": turn_id,
             })
             return {"ok": True, "state": state, "turnId": turn_id}
         if op in {"approve", "reject"}:

@@ -558,3 +558,71 @@ def test_cancel_codex_idle_daemon_native_producer_has_no_interrupt(
         assert reply['ok'] is False and reply['definitive'] is True
         assert reply['error'] == 'no active turn'
         assert 'RPC turn/interrupt' not in trace.read_text()
+
+
+@pytest.mark.parametrize('receipts', ['none', 'damaged'])
+def test_cancel_codex_turn_without_an_opening_receipt_uses_the_live_turn(
+    short_root, tmp_path, monkeypatch, receipts,
+):
+    """A parent notification opens a Codex turn with no CCX delivery receipt.
+
+    Stop must still reach it through the live exact active turn, and a damaged
+    unrelated receipt must not block it; an invented ref stays refused.
+    """
+    from ccx import CodexClient
+    from ccx.codex import delivery as codex_delivery
+    _cancel_enabled_codex_binary(monkeypatch)
+    with native_codex._f2_fake_processes(short_root, tmp_path, monkeypatch) as (
+        cli, _restart, trace, store, _daemon_rpc,
+    ):
+        monkeypatch.setenv('CCX_CODEX_BIN', str(tmp_path/'fake-codex'))
+        proc = cli('new', '--engine', 'codex', '--cwd', str(tmp_path),
+                   '--worker-id', B, '--json')
+        assert proc.returncode == 0, (proc.stdout, proc.stderr)
+        CodexClient().create('cancel-hold-receiptless', cwd=str(tmp_path), worker_id=B)
+        ref = _wait_ref(f'codex:{B}')
+
+        def no_opening(_short, _turn_id):
+            if receipts == 'damaged':
+                raise codex_delivery.DeliveryReceiptError('unrelated damaged receipt')
+            return None
+
+        monkeypatch.setattr(codex_delivery, 'receipt_for_turn', no_opening)
+        with pytest.raises(DeliveryRejected):
+            cancel_turn(f'codex:{B}', cancellation_id='invented',
+                        turn_ref='ccx-turn:codex:v1:not-the-live-turn', timeout=.5)
+        assert trace.read_text().count('RPC turn/interrupt') == 0
+
+        result = stop_worker(f'codex:{B}', timeout=3)
+        assert result['turn_ref'] == ref
+        assert result['accepted'] is True and result['status'] == 'confirmed', result
+        assert trace.read_text().count('RPC turn/interrupt') == 1
+
+
+def test_codex_interrupt_targets_the_turn_it_checked_not_a_successor():
+    """The reader may publish successor U right after T is checked; U is never hit."""
+    import threading
+    from ccx.codex.daemon.worker import Worker
+
+    class _Lifecycle(dict):
+        def get(self, key, default=None):
+            value = super().get(key, default)
+            if key == 'activeTurnId' and value == 'turn-T':
+                self['activeTurnId'] = 'turn-U'  # successor published next
+            return value
+
+    sent = []
+    worker = Worker.__new__(Worker)
+    worker.lock = threading.RLock()
+    worker.killed, worker.kill_intent = threading.Event(), threading.Event()
+    worker.short = 'w'
+    worker.record = {'lifecycle': _Lifecycle(state='busy', activeTurnId='turn-T'),
+                     'native': {'threadId': 'thread-1'}, 'threadId': 'thread-1'}
+    from types import SimpleNamespace
+    worker.daemon = SimpleNamespace(client=SimpleNamespace(
+        request=lambda method, params: sent.append((method, params))))
+
+    reply = worker.handle_operation({'op': 'interrupt', 'expectedTurnId': 'turn-T'})
+
+    assert reply == {'ok': True, 'state': 'busy', 'turnId': 'turn-T'}
+    assert sent == [('turn/interrupt', {'threadId': 'thread-1', 'turnId': 'turn-T'})]

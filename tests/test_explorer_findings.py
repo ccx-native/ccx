@@ -221,7 +221,7 @@ def test_e_stop_claude_confirmed_unknown_explained_in_text(both, capsys, monkeyp
     monkeypatch.setattr(ops_cancel, "stop_worker", lambda *_a, **_kw: {
         "worker": {"worker": f"claude:{A}", "short": A[:8]},
         "status": "confirmed", "confirmed": True, "outcome": "unknown"})
-    assert "turn outcome unknown until Claude settles" in run_cli(capsys, "stop", A).out
+    assert "the turn is no longer running, outcome unknown" in run_cli(capsys, "stop", A).out
     obj = json.loads(run_cli(capsys, "stop", A, "--json").out)
     assert obj["status"] == "confirmed" and obj["confirmed"] is True
     assert obj["outcome"] == "unknown" and obj["cancelled"] is False
