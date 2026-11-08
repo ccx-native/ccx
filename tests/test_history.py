@@ -329,7 +329,12 @@ def test_bad_input_is_a_usage_error(kwargs, message):
 
 @pytest.mark.parametrize("command, words", [
     ("cd x && pytest -q | tail -3", ["cd", "pytest", "tail"]),
-    ("PYTHONPATH=. timeout 30 .venv/bin/python3.12 -m pytest", ["python"]),
+    ("PYTHONPATH=. timeout 30 .venv/bin/python3.12 -m pytest", ["python", "pytest"]),
+    ("python -m pytest", ["python", "pytest"]),
+    (".venv/bin/python -m pytest -q", ["python", "pytest"]),
+    ("uv run python -m pytest", ["python", "pytest"]),
+    ("python3 -B -X dev -m http.server 8000", ["python", "http.server"]),
+    ("python -c 'import pytest' && python script.py -m x", ["python", "python"]),
     ("env -u CCX_SELF_WORKER_ID /usr/bin/python - <<'PY'\nimport os; os.system('rm -rf x')\nPY",
      ["python"]),
     ("ls a 2>&1 | head", ["ls", "head"]),
@@ -601,3 +606,49 @@ def test_a_notification_cut_by_the_result_bound_still_reads():
     cut_, beat = hist.project(doc).messages()
     assert cut_.text.startswith("claude:58ef24b5 settled completed: ACCEPT: closes M1-M3.")
     assert beat.text == "codex:ab progress running: running tests"
+
+
+# --- tool output bounds ---------------------------------------------------------------
+
+LONG_OUTPUT = "START of the README\n" + "middle line\n" * 600 + "THE REAL END: 3 passed"
+
+
+def long_output_events():
+    return [_user("u1", "show the readme", 0),
+            _assistant("a1", 0.5, _bash("t1", "cat README.md", "Show the README")),
+            _result("r1", "t1", LONG_OUTPUT, 1),
+            _assistant("a2", 1.5, _text("done"))]
+
+
+def test_cut_output_says_so_and_full_output_shows_the_real_end(tmp_path):
+    events = long_output_events()
+    bounded = claude_doc(tmp_path, events)             # read at 4096 bytes
+    text = render(bounded, cmd="cat", role="tool,output")
+    assert "[output cut at 4 KB of 7 KB; --full or --turns 1.1 for all]" in text
+    assert "THE REAL END" not in text
+    trace = render(bounded, turns="1", view="trace", role="tool,output")
+    assert "[output cut at 4 KB" in trace
+
+    path = write_jsonl(tmp_path / "full.jsonl", events)
+    rec = {"short": "966a8a1b", "sessionId": "s", "cwd": "/w", "transcript": str(path),
+           "createArgs": {}}
+    full = conv.build_claude(rec, state="idle", worker="claude:966a8a1b")
+    text = render(full, cmd="cat", role="tool,output")
+    assert "⤷" in text and "THE REAL END: 3 passed" in text and "output cut" not in text
+    assert "1 hit" in render(full, grep="REAL END", role="output")
+
+
+@pytest.mark.parametrize("flags, unbounded", [
+    (["--grep", "x"], False),
+    (["--view", "trace"], False),
+    (["--role", "tool,output"], True),
+    (["--grep", "x", "--role", "output"], True),
+    (["--turns", "1.0"], True),
+    (["--turns", "1.0,2-3"], True),
+    (["--turns", "2-3"], False),
+])
+def test_cli_reads_results_unbounded_when_output_matters(cli_worker, capsys, flags, unbounded):
+    _doc, reads = cli_worker
+    cli._main(["history", A[:8], *flags])
+    capsys.readouterr()
+    assert reads[-1][1] == (None if unbounded else 4096)

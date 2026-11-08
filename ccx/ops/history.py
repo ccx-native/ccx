@@ -54,6 +54,7 @@ class Message:
     cmd: str | None = None
     desc: str | None = None
     out: str = ""             # tool output, notification body, compaction summary
+    out_cut: tuple[int, int] | None = None  # (returned, original) bytes when the source bound cut it
     err: bool = False
     dur: float | None = None
 
@@ -192,8 +193,11 @@ def _tool_message(item: dict, base: dict) -> Message:
     dur = ((completed - started) / 1000.0 if isinstance(started, int)
            and isinstance(completed, int) and completed >= started else None)
     out = result.get("content")
+    out_cut = ((result.get("returnedByteCount") or 0, result.get("originalByteCount") or 0)
+               if result.get("truncated") else None)
     return Message(**base, role="tool", tool=name, cmd=cmd, desc=summary.get("description"),
                    out=out if isinstance(out, str) else ("" if out is None else json.dumps(out)),
+                   out_cut=out_cut,
                    err=bool(result.get("isError")) or item.get("status") in ("failed", "declined"),
                    dur=dur)
 
@@ -412,7 +416,28 @@ def command_words(cmd: str, _depth: int = 0) -> list[str]:
                 words.extend(command_words(inner, _depth + 1))
                 continue
         words.append(word)
+        if word == "python":
+            module = _python_module(toks[1:])
+            if module:
+                words.append(module)
     return words
+
+
+def _python_module(args: list[str]) -> str | None:
+    """MODULE of ``python [options] -m MODULE``: ``python -m pytest`` runs pytest."""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "-m":
+            module = args[i + 1].strip("'\"") if i + 1 < len(args) else ""
+            return module if re.fullmatch(r"[\w.]+", module) else None
+        if arg in ("-X", "-W"):
+            i += 2
+            continue
+        if not arg.startswith("-") or arg == "-c":
+            return None              # a script, `-` (stdin) or -c code: no module
+        i += 1
+    return None
 
 
 def _shell_c_argument(segment: str) -> str | None:
@@ -585,14 +610,12 @@ class Options:
     def hits_mode(self) -> bool:
         return self.search and self.view is None and self.context is None
 
-    @property
-    def addresses_only(self) -> bool:
-        return self.turns is not None and all(
-            "." in p for p in self.turns.replace("#", "").split(","))
-
     def needs_full_results(self) -> bool:
-        """Tool results unbounded only where they are printed whole."""
-        return self.addresses_only or (self.full and bool(self.roles) and "output" in self.roles)
+        """Read tool results unbounded when output is searched or shown, or a
+        message is read by address: a cut result would hide its real end."""
+        addressed = self.turns is not None and any(
+            "." in p for p in self.turns.replace("#", "").split(","))
+        return addressed or bool(self.roles and "output" in self.roles)
 
 
 def options(*, view=None, turns=None, grep=None, cmd=None, errors=False, role=None,
@@ -711,6 +734,16 @@ def tool_label(m: Message, commands: bool, limit: int | None = 160) -> str:
     return f"{m.tool}{mark}{d}: {text}"
 
 
+def cut_note(m: Message) -> str:
+    """Say that a tool output is only the start of the real one."""
+    if not m.out_cut:
+        return ""
+    returned, original = m.out_cut
+    kb = lambda n: f"{max(1, round(n / 1024))} KB"  # noqa: E731
+    return (f"[output cut at {kb(returned)} of {kb(original)}; "
+            f"--full or --turns {m.turn}.{m.n} for all]")
+
+
 def compact_line(m: Message) -> str:
     extra = f" · {len(m.out) // 1000}k-char summary" if m.out else ""
     text = f" · {m.text}" if m.text else ""
@@ -777,7 +810,8 @@ def render_turns(turns: list[Turn], view: str, out: TextIO, *, max_chars: int | 
                     print(f"    .{m.n}{_msg_clock(m.ts, t.start)} "
                           f"{tool_label(m, commands, tool_limit)}", file=out)
                     if "output" in shown and m.out:
-                        print("      " + cut(m.out, max_chars).replace("\n", "\n      "), file=out)
+                        text = cut(m.out, max_chars) + (f"\n{cut_note(m)}" if m.out_cut else "")
+                        print("      " + text.replace("\n", "\n      "), file=out)
                 continue
             body = m.text + (f"\n{m.out}" if m.role == "notify" and m.out else "")
             print(f"[.{m.n} {tag(m)}{_msg_clock(m.ts, t.start)}] {cut(body, max_chars)}", file=out)
@@ -962,6 +996,7 @@ def _render_addressed(h: History, sel: Selection, opts: Options, out: TextIO) ->
             continue
         if m.role == "tool":
             body = (m.cmd or "") + ("\n--- output ---\n" + m.out if m.out else "")
+            body += f"\n{cut_note(m)}" if m.out_cut else ""
         elif m.role == "compact":
             body = m.out or ("(no summary stored locally: Codex encrypts compaction summaries)"
                              if h.engine == "codex" else "(no summary text)")
@@ -990,7 +1025,8 @@ def _render_hits(h: History, turns: list[Turn], keep, opts: Options, out: TextIO
         print(f"  #{m.turn}.{m.n} {_clock(m.ts or starts.get(m.turn), True)} {tag(m)}: "
               f"{snippet(m, rx)}", file=out)
         if with_output and m.role == "tool" and m.out:
-            print(f"      ⤷ {_one(m.out[-200:], 200)}", file=out)     # how it ended
+            ending = cut_note(m) or _one(m.out[-200:], 200)        # how it ended
+            print(f"      ⤷ {ending}", file=out)
     return Hint(h.short, shown[-1].turn, shown[-1].n) if shown else None
 
 
