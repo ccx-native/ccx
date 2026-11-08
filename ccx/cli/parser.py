@@ -141,44 +141,49 @@ processes and writes outside the workspace. Codex must be on PATH or
 CCX_CODEX_BIN must point to its executable."""
 
 HISTORY_DESCRIPTION = """\
-Read past conversations of the workers you name, or search them. Nothing is sent;
-it works on idle, busy and stopped workers. Reasoning is never shown.
+Read past conversations of the workers you name, or search them. Nothing is
+sent; it works on idle, busy and stopped workers. Reasoning is never shown.
 
-Each turn starts with a prompt: a user message (U), a notification or event
-(N[kind]: bg, monitor, agent, cron, system, ccx, ...) or a slash command (/). A
-message sent while the turn runs is a steer (U+). A* marks a turn's final answer,
-A… the latest text of a turn still running. Every message has an address
-#TURN.N, the same numbers as `ccx logs`; --turns TURN.N prints that message
-whole. A compaction is one line (══ #TURN.N compaction); its address prints the
-summary.
+Each message is labelled: U a user message, U+ a user message sent while the
+turn ran (a steer), N[kind] a notification or event (bg, monitor, agent, cron,
+system, ccx, ...), / a slash command, ! an interrupt, A assistant text, A* the
+turn's final answer, A… the latest text of a turn still running, T a tool call.
+
+Every message has an address #TURN.N, the same numbers as `ccx logs` and
+`ccx peek --since-turn`; --turns TURN.N prints that message whole. A compaction
+is one line (══ #TURN.N compaction); its address prints the summary when one is
+stored (Codex encrypts its summaries).
 
 What you get:
-  no options             outline of the last 30 turns (10 per worker when several)
+  no options             outline of the last 30 turns (10 per worker if several)
   --since/--until        outline of the turns in that time range
-  --turns SPEC           those turns as chat
+  --turns SPEC           those turns as chat (--turns 1- for all)
+  --role ROLES           recent turns as chat, showing only those roles
   --grep/--cmd/--errors  one line per matching message, newest 20 per worker;
                          add -C N (or --view) to read the matching turns instead
 
 Views (--view):
   outline  one block per turn: prompt, start of the final answer, tool summary
   chat     prompts and final answers, each cut to --max-chars
-  trace    every message, plus one line per tool call
-  map      segments between compactions and long idle gaps, one title each"""
+  trace    prompts, all assistant text, and one line per tool call
+  map      the whole history in segments split at compactions and idle gaps
+           over 6 hours, one title each"""
 
 HISTORY_EPILOG = """\
-Roles (--role picks what is searched and shown; search default:
-user,assistant,notify,tool):
-  user       user messages, steers, slash commands
+Roles (--role picks what is searched, and what chat and trace show; search
+default: user,assistant,notify,tool):
+  user       user messages, steers, slash commands, interrupts
   notify     notifications and events
-  assistant  all assistant text; final: final answers only
+  assistant  all assistant text; final: final answers only (A*, A…)
   tool       tool calls, shown as commands; output: tool results
   compact    compaction summaries (search only)
+Tool output is searched and shown only when output is in --role.
 
 --grep is a regular expression; all lowercase means case-insensitive. --cmd
-matches the command name of each shell command in a call, so `cd x && timeout
-30 .venv/bin/python -m pytest | tail` runs cd, python and tail. --since/--until
-take 2026-11-02, '11-02 14:00', 14:00 (today) or 90m/6h/2d (ago); a bare
---until date includes that day. Times are local.
+matches whole command names, in any case: `cd x && timeout 30 .venv/bin/python
+-m pytest | tail` runs cd, python, pytest and tail. --since/--until take
+2026-11-02, '11-02 14:00', 14:00 (today) or 90m/6h/2d (ago), in local time; a
+bare --until date includes that day.
 
 Examples:
   ccx history W                                  recent turns
@@ -1006,12 +1011,13 @@ def _add_inventory_parsers(sub) -> None:
     ph.add_argument("--grep", metavar="REGEX",
                     help="Messages matching REGEX in the searched roles.")
     ph.add_argument("--cmd", dest="command_regex", metavar="REGEX",
-                    help="Tool calls running a matching command.")
+                    help="Tool calls running a command whose name matches REGEX.")
     ph.add_argument("--errors", action="store_true", help="Failed tool calls only.")
     ph.add_argument("--role", metavar="ROLES",
                     help="Comma-separated roles to search and show; see below.")
     ph.add_argument("--since", metavar="TIME", help="From this time; see below.")
-    ph.add_argument("--until", metavar="TIME", help="Before this time.")
+    ph.add_argument("--until", metavar="TIME",
+                    help="Before this time; a date includes that whole day.")
     ph.add_argument("-C", "--context", type=int, metavar="N",
                     help="Read the matching turns instead of hit lines, with N turns around each.")
     ph.add_argument("--view", choices=("outline", "chat", "trace", "map"),
@@ -1022,7 +1028,8 @@ def _add_inventory_parsers(sub) -> None:
                     help="Cut each message to N characters (default 3000; "
                          "one addressed message prints whole).")
     ph.add_argument("--full", action="store_true",
-                    help="Don't cut messages, commands or tool output.")
+                    help="Don't cut messages, commands or tool output "
+                         "(hit lines stay short).")
     ph.set_defaults(func=cmd_history)
 
     prep = sub.add_parser(

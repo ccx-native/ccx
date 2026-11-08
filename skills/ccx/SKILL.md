@@ -61,7 +61,15 @@ ccx send "$W" "Now add a regression test."
 - `ccx peek TARGET`: state, latest messages, tools and errors. Start here.
   `ccx peek A B --status` checks several workers at once.
 - `ccx report TARGET`: the last reply.
-- `ccx logs TARGET`: conversation JSON when the report isn't enough.
+- `ccx history TARGET...`: earlier turns as text. Lines carry addresses
+  (`#184.0`); `--turns 184.0` prints one message whole, `--turns 180-186` the
+  exchange. Search the workers you name with `--grep RE`, `--cmd pytest` or
+  `--errors` (the newest 20 hits each); `--view map` gives a long history at a
+  glance.
+- After a compaction, read what you lost with `ccx history` on yourself
+  (`$CCX_SELF_WORKER_ID`), not the raw transcript. See
+  [references/history.md](references/history.md).
+- `ccx logs TARGET`: the whole conversation as JSON, for programs.
 - `ccx list`: find workers by name, state or folder.
 
 ## Permissions
