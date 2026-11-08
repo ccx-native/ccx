@@ -34,6 +34,12 @@ All notable changes to ccx are documented here. The format follows
   working now stays in that turn, as it already did on Codex. Claude turn numbers
   in `ccx logs` and `ccx peek --since-turn` change once.
 
+### Deprecated
+
+- `ccx logs --format rendered` prints a deprecation note and will be removed.
+  Read a conversation as text with `ccx history`; programs keep the default
+  JSON. `CcxClient.logs()` in Python is unchanged.
+
 ### Fixed
 
 - `ccx stop` on a Claude worker no longer refuses while a steer is waiting

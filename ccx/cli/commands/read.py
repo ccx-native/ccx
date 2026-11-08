@@ -293,6 +293,11 @@ def cmd_logs(args):
             sys.stdout.write(client._claude.logs(owner.worker, jsonl=True))
             return
         if args.format == "rendered":
+            sys.stderr.write(
+                "[ccx] logs --format rendered is deprecated and will be removed; "
+                "read a conversation as text with `ccx history TARGET --view trace`, "
+                "or use the default JSON in programs\n"
+            )
             doc = client._claude.logs(owner.worker, tail=args.tail)
             json.dump(doc, sys.stdout, indent=2)
             sys.stdout.write("\n")

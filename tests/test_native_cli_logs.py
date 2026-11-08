@@ -165,6 +165,7 @@ def test_cli_logs_claude_rendered_raw_priority_utf8_and_original_source_errors(
     legacy = _cli(store, A, "--format", "rendered", "--tail", "1",
                   "--max-tool-result-bytes", "-1")
     assert legacy.returncode == 0, legacy.stderr
+    assert "--format rendered is deprecated" in legacy.stderr and "ccx history" in legacy.stderr
     assert legacy.stdout.endswith("\n") and "\\u00e9" in legacy.stdout
     assert "UNCOMMITTED" not in legacy.stdout
     doc = json.loads(legacy.stdout)
