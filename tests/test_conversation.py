@@ -113,22 +113,22 @@ def test_turn_sequence_is_dense_and_ordered():
 def test_claude_turn_segmentation_and_ordering():
     doc = build_claude()
     kinds = [[i["kind"] for i in t["input"]] for t in doc["turns"]]
-    assert kinds[0] == ["user-text"]
-    # A prompt delivered mid-turn as a queued_command attachment opens a turn.
-    assert kinds[1] == ["user-text"]
-    assert doc["turns"][1]["input"][0]["nativeType"] == "queued_command"
-    assert kinds[2] == ["command"]
-    assert kinds[3] == ["user-text", "attachment"]
+    # A prompt queued into the running turn (queued_command) stays in it.
+    assert kinds[0] == ["user-text", "user-text"]
+    assert doc["turns"][0]["input"][1]["nativeType"] == "queued_command"
+    assert kinds[1] == ["command"]
+    assert kinds[2] == ["user-text", "attachment"]
     first = doc["turns"][0]
     assert [i["kind"] for i in first["output"]] == [
-        "assistant-text", "tool-call", "assistant-text",
+        "assistant-text", "tool-call", "assistant-text", "assistant-text",
+        "system-text",
     ]
     assert first["startedAt"] == "2026-07-27T09:00:00Z"
-    assert first["completedAt"] == "2026-07-27T09:00:03Z"
+    assert first["completedAt"] == "2026-07-27T09:00:06Z"
 
 
 def test_claude_command_item_carries_name_and_args():
-    command = build_claude()["turns"][2]["input"][0]
+    command = build_claude()["turns"][1]["input"][0]
     assert command["name"] == "/compact"
     assert command["arguments"] == {"args": "keep the tests"}
 
@@ -176,14 +176,14 @@ def test_claude_queued_command_with_image_is_a_block_list(tmp_path):
     src = tmp_path / "queued-image.jsonl"
     src.write_text("\n".join([*lines, queued]) + "\n")
     doc = build_claude(src)
-    last = doc["turns"][-1]["input"]
+    last = doc["turns"][-1]["input"][-2:]
     assert [i["kind"] for i in last] == ["user-text", "attachment"]
     assert last[0]["nativeType"] == "queued_command"
     assert last[0]["text"] == "[Image #1] look at this"
     assert last[1]["mediaType"] == "image/png"
     assert "data" not in last[1]["native"]["source"]
     # An unknown block is kept, as in a user message, not dropped.
-    other = doc["turns"][-1]["output"]
+    other = doc["turns"][-1]["output"][-1:]
     assert [(i["kind"], i["nativeType"]) for i in other] == [("other", "future_block")]
     assert doc["completeness"]["omittedItemCount"] == 0
 
@@ -216,7 +216,7 @@ def test_claude_error_is_not_flattened_into_text():
     assert len(errors) == 1
     assert errors[0]["message"] == "API Error: overloaded"
     assert errors[0]["data"] == {"status": 529, "requestId": "req_1"}
-    assert doc["turns"][3]["status"] == "failed"
+    assert doc["turns"][2]["status"] == "failed"
 
 
 def test_claude_compact_boundary_is_a_system_item():
@@ -236,9 +236,14 @@ def test_claude_attachment_metadata_survives_without_inline_bytes():
     assert attachment["native"]["source"]["type"] == "base64"
 
 
-def test_claude_unknown_event_types_are_preserved_as_other():
-    others = [i for i in all_items(build_claude()) if i["kind"] == "other"]
-    assert "queue-operation" in [o["nativeType"] for o in others]
+def test_claude_unknown_event_types_are_preserved_as_other(tmp_path):
+    src = tmp_path / "future.jsonl"
+    src.write_text(CLAUDE_JSONL.read_text() + json.dumps(
+        {"type": "future-record", "uuid": "fr1", "value": 1}) + "\n")
+    others = [i for i in all_items(build_claude(src)) if i["kind"] == "other"]
+    assert "future-record" in [o["nativeType"] for o in others]
+    # Known session bookkeeping is not conversation.
+    assert "queue-operation" not in [o["nativeType"] for o in others]
 
 
 def test_claude_usage_is_mapped_and_unknowns_stay_null():
@@ -247,7 +252,7 @@ def test_claude_usage_is_mapped_and_unknowns_stay_null():
         "inputTokens": 10, "outputTokens": 5, "cachedInputTokens": 2,
         "cacheCreationTokens": 3, "reasoningTokens": None,
     }
-    assert build_claude()["turns"][2]["usage"]["inputTokens"] is None
+    assert build_claude()["turns"][1]["usage"]["inputTokens"] is None
 
 
 def test_claude_observed_model_is_never_fabricated(tmp_path):

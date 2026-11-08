@@ -18,6 +18,9 @@ All notable changes to ccx are documented here. The format follows
   reads the whole history.
 - `ccx report` and `ccx logs --tail` read long transcripts from the end much
   faster.
+- On Claude workers, a steer or task notification that arrives while Claude is
+  working now stays in that turn, as it already did on Codex. Claude turn numbers
+  in `ccx logs` and `ccx peek --since-turn` change once.
 
 ### Fixed
 
@@ -41,6 +44,15 @@ All notable changes to ccx are documented here. The format follows
   and no `ccx send` started it. It also no longer refuses for a gap in CCX's
   local record of the worker: Codex's own history of that exact turn is
   enough, unless the record says the turn ended differently.
+- `ccx logs` no longer shows an empty first turn on recent Claude workers, and
+  no longer includes Claude Code's session records, which held account and
+  organization IDs.
+
+### Added
+
+- `ccx logs` items on Claude workers carry their own time (`startedAtMs`, and
+  `completedAtMs` for tool calls), injected Claude rows are marked `meta`, and
+  Codex notification results keep their `namespace`.
 
 ### Removed
 

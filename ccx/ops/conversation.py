@@ -533,14 +533,20 @@ _CLAUDE_BOOKKEEPING_TYPES = frozenset({
     "last-prompt", "custom-title", "ai-title", "agent-name", "mode",
     "permission-mode", "atis-latch", "file-history-snapshot",
     "file-history-delta", "api-request", "api-request-shape",
-    "api-request-blob",
+    "api-request-blob", "session-owner", "queue-operation", "tools-used",
+    "cost-state",
 })
 _CLAUDE_BOOKKEEPING_ATTACHMENTS = frozenset({
     "hook_success", "hook_non_blocking_error", "hook_permission_decision",
     "hook_additional_context", "environment", "model", "deferred_tools_delta",
     "agent_listing_delta", "mcp_instructions_delta", "skill_listing",
     "total_tokens_reminder", "session_context", "date", "credential_org",
-    "remote_session_change", "prompt_snapshot",
+    "remote_session_change", "prompt_snapshot", "deferred_tools_record",
+    "silent_turn_reminder", "instructions", "nested_memory", "auto_mode",
+    "auto_mode_exit", "plan_mode", "plan_mode_exit", "edited_text_file",
+    "compact_file_reference", "thinking_drop", "invoked_skills",
+    "skill_mention", "command_permissions", "bash_output_audience_note",
+    "batching_reminder_sent", "session_cron_carry",
 })
 _CLAUDE_BOOKKEEPING_SYSTEM = frozenset({"stop_hook_summary", "turn_duration"})
 
@@ -613,12 +619,19 @@ def _normalize_claude_events(
     events: list[dict],
     counters: _Counters,
     max_tool_result_bytes: int | None,
+    *,
+    fingerprints: bool = True,
 ) -> tuple[list[dict], str | None, list[dict]]:
-    """Normalize Claude events once for full documents and bounded pages."""
+    """Normalize Claude events once for full documents and bounded pages.
+
+    Only paging cursors need each source record's ``_ccx_fingerprint``, and it
+    costs most of a large transcript's parse, so full documents skip it.
+    """
     turns: list[dict] = []
     source_records: list[dict] = []
     observed_model: str | None = None
     current: dict | None = None
+    running: dict | None = None  # current, until Claude records the turn's end
     awaiting: dict[str, dict] = {}
     usage_record_by_message: dict[str, dict] = {}
     (
@@ -628,8 +641,8 @@ def _normalize_claude_events(
     ) = _claude_structural_links(events)
 
     def open_turn() -> dict:
-        nonlocal current
-        current = _turn(len(turns) + 1)
+        nonlocal current, running
+        current = running = _turn(len(turns) + 1)
         turns.append(current)
         return current
 
@@ -669,11 +682,14 @@ def _normalize_claude_events(
                     ensure_ascii=False,
                     default=str,
                 ).encode("utf-8")
-            ).hexdigest(),
+            ).hexdigest() if fingerprints else None,
         }
         source_records.append(record)
 
         def place(target: dict, bucket: str, item: dict) -> dict:
+            if isinstance(ts, int):  # the native row's time, named as Codex's
+                item["startedAtMs"] = ts
+                item["timingSource"] = "claude-transcript"
             placed = _place(target, bucket, item)
             if page_bearing:
                 record["items"].append(placed)
@@ -683,6 +699,8 @@ def _normalize_claude_events(
             # Never page-bearing, so bounded pages are unaffected; the source
             # record above still counts toward paging positions.
             counters.bookkeeping_excluded += 1
+            if etype == "system" and evt.get("subtype") == "turn_duration":
+                running = None  # Claude closed the current turn
             continue
 
         if etype == "user":
@@ -722,6 +740,9 @@ def _normalize_claude_events(
                     else:
                         place(opened, "input", _item(
                             "user-text", "user", evt.get("uuid"), text=text,
+                            # Claude Code's own injected rows (command caveats,
+                            # skill bodies, peer and scheduled prompts).
+                            **({"meta": True} if evt.get("isMeta") else {}),
                         ))
                     stamp(opened, ts)
                 elif btype == "tool_result":
@@ -734,6 +755,8 @@ def _normalize_claude_events(
                     if call is not None:
                         call["result"] = payload
                         call["status"] = "failed" if payload["isError"] else "completed"
+                        if isinstance(ts, int):
+                            call["completedAtMs"] = ts
                         continue
                     counters.warn(
                         f"tool_result {tid or '<no id>'} has no unpaired "
@@ -856,7 +879,9 @@ def _normalize_claude_events(
                     text = prompt.strip() if isinstance(prompt, str) else ""
                 if not text and not media and not others:
                     continue
-                target = open_turn()
+                # Claude queues a steer or task notification into the running
+                # turn, so it stays there; it opens a turn only when none runs.
+                target = running or open_turn()
                 if text:
                     place(target, "input", _item(
                         "user-text", "queued_command", evt.get("uuid"), text=text,
@@ -948,7 +973,7 @@ def build_claude(rec: dict, *, state: str | None, worker: str,
         )
 
     turns, observed_model, _records = _normalize_claude_events(
-        events, counters, max_tool_result_bytes,
+        events, counters, max_tool_result_bytes, fingerprints=False,
     )
 
     artifact = {
@@ -1230,6 +1255,7 @@ def _codex_item(entry: dict, counters: _Counters,
             "tool-result", itype, item_id,
             callId=entry.get("callId") or item_id,
             name=entry.get("name"),
+            namespace=entry.get("namespace"),
             result=_result_payload(entry.get("output"), False, limit, counters),
         )]
 
