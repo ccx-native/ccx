@@ -8,7 +8,7 @@ import textwrap
 from ccx.cli.commands.control import cmd_attach, cmd_kill, cmd_shutdown, cmd_stop, cmd_untrust
 from ccx.cli.commands.create import cmd_fork, cmd_import, cmd_new, cmd_resume
 from ccx.cli.commands.read import (
-    cmd_context, cmd_events, cmd_list, cmd_logs, cmd_peek,
+    cmd_context, cmd_events, cmd_history, cmd_list, cmd_logs, cmd_peek,
     cmd_report, cmd_usage,
 )
 from ccx.cli.commands.turns import (
@@ -140,11 +140,64 @@ From Codex, run ccx outside the sandbox (or with full access): it starts
 processes and writes outside the workspace. Codex must be on PATH or
 CCX_CODEX_BIN must point to its executable."""
 
+HISTORY_DESCRIPTION = """\
+Read past conversations of the workers you name, or search them. Nothing is sent;
+it works on idle, busy and stopped workers. Reasoning is never shown.
+
+Each turn starts with a prompt: a user message (U), a notification or event
+(N[kind]: bg, monitor, agent, cron, system, ccx, ...) or a slash command (/). A
+message sent while the turn runs is a steer (U+). A* marks a turn's final answer,
+A… the latest text of a turn still running. Every message has an address
+#TURN.N, the same numbers as `ccx logs`; --turns TURN.N prints that message
+whole. A compaction is one line (══ #TURN.N compaction); its address prints the
+summary.
+
+What you get:
+  no options             outline of the last 30 turns (10 per worker when several)
+  --since/--until        outline of the turns in that time range
+  --turns SPEC           those turns as chat
+  --grep/--cmd/--errors  one line per matching message, newest 20 per worker;
+                         add -C N (or --view) to read the matching turns instead
+
+Views (--view):
+  outline  one block per turn: prompt, start of the final answer, tool summary
+  chat     prompts and final answers, each cut to --max-chars
+  trace    every message, plus one line per tool call
+  map      segments between compactions and long idle gaps, one title each"""
+
+HISTORY_EPILOG = """\
+Roles (--role picks what is searched and shown; search default:
+user,assistant,notify,tool):
+  user       user messages, steers, slash commands
+  notify     notifications and events
+  assistant  all assistant text; final: final answers only
+  tool       tool calls, shown as commands; output: tool results
+  compact    compaction summaries (search only)
+
+--grep is a regular expression; all lowercase means case-insensitive. --cmd
+matches the command name of each shell command in a call, so `cd x && timeout
+30 .venv/bin/python -m pytest | tail` runs cd, python and tail. --since/--until
+take 2026-11-02, '11-02 14:00', 14:00 (today) or 90m/6h/2d (ago); a bare
+--until date includes that day. Times are local.
+
+Examples:
+  ccx history W                                  recent turns
+  ccx history W --view map                       a long history at a glance
+  ccx history A B C --grep 'apple silicon' --role user
+  ccx history W --turns 184.0                    one message, whole
+  ccx history W --turns 180-186                  the exchange around it
+  ccx history A B C --turns -1                   each worker's last turn
+  ccx history W --grep 'deploy|rollback' -C 1    the turns about a topic
+  ccx history W --role notify                    recent notifications
+  ccx history W --cmd pytest --role tool,output  test runs and how each ended
+  ccx history A B --since '11-07 21:00' --until '11-07 22:00'"""
+
+
 COMMAND_GROUPS = (
     ("Create", ("new", "fork", "resume", "import")),
     ("Turns", ("send", "steer", "stop", "wait", "notify", "reconcile")),
     ("Input requests", ("answer", "approve", "reject", "respond")),
-    ("Inspect", ("list", "peek", "report", "logs", "context", "events", "vars")),
+    ("Inspect", ("list", "peek", "report", "history", "logs", "context", "events", "vars")),
     ("Manage", ("attach", "compact", "set", "kill", "shutdown")),
     ("Account", ("usage",)),
     ("Setup and automation", ("init", "skills", "untrust", "controller", "rpc")),
@@ -936,6 +989,40 @@ def _add_inventory_parsers(sub) -> None:
     pg.add_argument("--jsonl", action="store_true",
                     help="Claude only: print Claude's raw JSONL transcript.")
     pg.set_defaults(func=cmd_logs)
+
+    ph = sub.add_parser(
+        "history",
+        help="Read or search workers' past conversations as text.",
+        description=HISTORY_DESCRIPTION,
+        epilog=HISTORY_EPILOG,
+        formatter_class=_HelpFormatter,
+    )
+    ph.add_argument("targets", nargs="+", metavar="target",
+                    help="One or more workers (find them with `ccx list`).")
+    ph.add_argument("--turns", metavar="SPEC",
+                    help="12, 10-14, 120-, -5 (the last five) or 184.0 (one message); "
+                         "comma-separated.")
+    ph.add_argument("--grep", metavar="REGEX",
+                    help="Messages matching REGEX in the searched roles.")
+    ph.add_argument("--cmd", dest="command_regex", metavar="REGEX",
+                    help="Tool calls running a matching command.")
+    ph.add_argument("--errors", action="store_true", help="Failed tool calls only.")
+    ph.add_argument("--role", metavar="ROLES",
+                    help="Comma-separated roles to search and show; see below.")
+    ph.add_argument("--since", metavar="TIME", help="From this time; see below.")
+    ph.add_argument("--until", metavar="TIME", help="Before this time.")
+    ph.add_argument("-C", "--context", type=int, metavar="N",
+                    help="Read the matching turns instead of hit lines, with N turns around each.")
+    ph.add_argument("--view", choices=("outline", "chat", "trace", "map"),
+                    help="How to show turns; see above.")
+    ph.add_argument("--limit", type=int, default=20, metavar="N",
+                    help="Hit lines per worker, newest (default 20).")
+    ph.add_argument("--max-chars", type=int, metavar="N",
+                    help="Cut each message to N characters (default 3000; "
+                         "one addressed message prints whole).")
+    ph.add_argument("--full", action="store_true",
+                    help="Don't cut messages, commands or tool output.")
+    ph.set_defaults(func=cmd_history)
 
     prep = sub.add_parser(
         "report",

@@ -23,6 +23,7 @@ _USER_WORKER_FIELDS = {
     "vars": ("target",),
     "events": ("target",),
     "logs": ("target",),
+    "history": ("targets",),
     "wait": ("target",),
     "answer": ("target",),
     "approve": ("target",),
@@ -195,7 +196,7 @@ _AUTO_INIT_COMMANDS = frozenset({
     "new", "import", "fork", "resume", "send", "steer", "reconcile",
     "wait", "notify", "answer", "approve", "reject", "respond",
     "set", "compact", "stop", "kill", "attach", "shutdown", "untrust",
-    "vars", "list", "logs", "report", "context", "peek", "events",
+    "vars", "list", "logs", "history", "report", "context", "peek", "events",
     "usage", "controller",
 })
 

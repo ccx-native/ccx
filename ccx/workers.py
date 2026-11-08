@@ -193,6 +193,27 @@ def _mark_recent_window(document: dict, limit: int, warning: str) -> None:
     document["peekHistoryWindow"] = {"kind": "recent", "limit": limit}
 
 
+def _note_history_db(document: dict, thread: dict) -> None:
+    """Say what a document read from Codex's local history database can't vouch for."""
+    from ccx.codex.history_store import VERIFIED_SCHEMA_VERSION
+
+    complete = document["completeness"]
+    warnings = list(complete.get("warnings") or [])
+    version = thread.get("historyDbVersion")
+    if version != VERIFIED_SCHEMA_VERSION:
+        warnings.append(
+            f"read from Codex's local history database, schema version {version} "
+            f"(checked against {VERIFIED_SCHEMA_VERSION})")
+    if any((t or {}).get("status") == "inProgress" for t in thread.get("turns") or []):
+        # The database is a projection of the rollout and can lag a running turn.
+        complete["sourceLimited"] = True
+        if complete.get("status") != "partial":
+            complete["status"] = "source-limited"
+        warnings.append("a turn is still running; Codex's local history database "
+                        "may not have its latest items yet")
+    complete["warnings"] = warnings
+
+
 def _background_task_block_for_worker(store, owner) -> dict:
     """Bound the original background-task facts for facade wait and report."""
     from ccx.ops.common import background_task_block, recorded_background_facts
@@ -1766,8 +1787,14 @@ class WorkerClient:
     def _open_full_conversation(self, worker, *, max_tool_result_bytes,
                                 timeout, include_native=False,
                                 codex_recent_turns: int | None = None,
-                                claude_recent_turns: int | None = None):
-        """Build once from the original owner, retaining its native source until exit."""
+                                claude_recent_turns: int | None = None,
+                                codex_history_db: bool = False):
+        """Build once from the original owner, retaining its native source until exit.
+
+        ``codex_history_db`` reads a Codex thread from Codex's local history
+        database first (``ccx.codex.history_store``), falling back to
+        app-server when that read declines.
+        """
         from ccx.codex import runtime as codex_runtime
         from ccx.codex import telemetry as codex_telemetry
         from ccx.claude.transcript import open_original_claude_source, PinnedNativeSource
@@ -1844,10 +1871,15 @@ class WorkerClient:
                                     "warnings": [*(evidence.get("warnings") or []),
                                                  "excluded native evidence from a foreign thread"]}
                     known_empty = rec.get("historyKnownEmpty") is True
+                    thread = None
+                    if codex_history_db and not known_empty and codex_recent_turns is None:
+                        # Codex's local history database; None means fall back.
+                        from ccx.codex.history_store import read_thread_db
+                        thread = read_thread_db(thread_id)
                     if known_empty:
                         thread = {"id": thread_id, "threadSource": store.codex_source(owner.worker),
                                   "turns": []}
-                    else:
+                    elif thread is None:
                         # Only rich Codex peek requests a bounded recent window.
                         # Ordinary full conversation, logs and export retain
                         # their unmodified source-read argument contract.
@@ -1865,6 +1897,8 @@ class WorkerClient:
                         worker=owner.worker,
                         max_tool_result_bytes=max_tool_result_bytes, evidence=evidence,
                     )
+                    if thread.get("historySource") == "codex-history-db":
+                        _note_history_db(document, thread)
                     if (codex_recent_turns is not None
                             and len(thread.get("turns") or []) >= codex_recent_turns):
                         _mark_recent_window(
@@ -1902,7 +1936,8 @@ class WorkerClient:
     def conversation(self, worker, *, max_tool_result_bytes: int | None = None,
                      timeout: float | None = None,
                      _recent_codex_turns: int | None = None,
-                     _recent_claude_turns: int | None = None) -> dict:
+                     _recent_claude_turns: int | None = None,
+                     _codex_history_db: bool = False) -> dict:
         """Read a normalized full history from this original full-UUID owner.
 
         Claude reads a pinned native JSONL complete-line snapshot; Codex reads
@@ -1913,6 +1948,7 @@ class WorkerClient:
             worker, max_tool_result_bytes=max_tool_result_bytes,
             timeout=timeout, codex_recent_turns=_recent_codex_turns,
             claude_recent_turns=_recent_claude_turns,
+            codex_history_db=_codex_history_db,
         ) as (_owner, document, _native, _files):
             return document
 

@@ -317,6 +317,57 @@ def cmd_logs(args):
         raise SystemExit(error.exit_code) from error
 
 
+def cmd_history(args):
+    """Print the named workers' past conversations as text, or search them.
+
+    Read-only: each worker's normalized document is read from its original
+    source (Codex from its local history database when it can be), projected
+    by ``ccx.ops.history`` and printed. A worker that can't be read is reported
+    on stderr while the others still print.
+    """
+    from ccx import constants
+    from ccx.ops import history as hist
+    from ccx.store.identity import IdentityError
+    from ccx.store.root import GenerationError, require_ccx_active
+    from ccx.workers import WorkerClient
+
+    try:
+        opts = hist.options(
+            view=args.view, turns=args.turns, grep=args.grep, cmd=args.command_regex,
+            errors=args.errors, role=args.role, since=args.since, until=args.until,
+            context=args.context, limit=args.limit, max_chars=args.max_chars,
+            full=args.full)
+    except InvalidRequest as error:
+        print(f"ccx history: {error}", file=sys.stderr)
+        raise SystemExit(error.exit_code) from None
+    store = require_ccx_active(constants.CCX_ROOT)
+    client = WorkerClient()
+    zone = hist.zone_name()
+    many = len(args.targets) > 1
+    hint = None
+    failed = 0
+    for target in args.targets:
+        try:
+            owner = store.resolve(target)
+            name = store.record(owner.worker).get("name")
+            doc = client.conversation(
+                owner.worker,
+                max_tool_result_bytes=None if opts.needs_full_results() else 4096,
+                _codex_history_db=True)
+            store.revalidate()
+        except (CcxError, GenerationError, IdentityError, OSError) as exc:
+            failed += 1
+            print(f"ccx history {target}: cannot read the conversation: {exc}", file=sys.stderr)
+            continue
+        hint = hist.render_history(hist.project(doc, name=name), opts, sys.stdout,
+                                   many=many, zone=zone) or hint
+        sys.stdout.flush()
+    if hint is not None:
+        print("\n" + hist.hint_line(hint))
+    if failed:
+        raise SystemExit(EXIT_UNAVAILABLE)
+
+
 class _ReportFailure(Exception):
     """One target that cannot be reported: message plus the CLI exit code."""
 

@@ -5,6 +5,18 @@ All notable changes to ccx are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `ccx history` reads past conversations of the workers you name as text, or
+  searches them. With no options it shows recent turns as an outline;
+  `--turns` reads exact turns or one message; `--grep`, `--cmd` (the commands
+  a tool call ran) and `--errors` list matching messages, newest first, each
+  with its address (`#TURN.N`, the same numbers as `ccx logs`). `--role`,
+  `--since`/`--until`, `-C` and the `chat`, `trace` and `map` views narrow
+  and shape the output. Reasoning is never shown. Codex histories are read
+  from Codex's local history database when possible, which takes
+  milliseconds instead of minutes on long threads.
+
 ### Changed
 
 - Claude hosts no longer re-read a worker's whole transcript after every turn.

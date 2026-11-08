@@ -87,8 +87,10 @@ shows their replies.
   worker), which you answer with `approve`/`reject`. There is no `answer` or
   `respond`, and `reject --reason` is Claude-only.
 - **Context:** `peek --status` shows tokens used and the window percentage.
-- **History** comes from the Codex app-server; ccx doesn't parse Codex's own
-  session files. `ccx logs --jsonl` and `--format rendered` are Claude-only.
+- **History** comes from the Codex app-server. `ccx history` reads Codex's
+  local history database first (read-only) and falls back to app-server; ccx
+  doesn't parse Codex's session files. `ccx logs --jsonl` and
+  `--format rendered` are Claude-only.
 
 ## Known limitations
 
