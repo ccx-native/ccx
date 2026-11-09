@@ -1984,6 +1984,11 @@ class WorkerClient:
 
     # -- account usage ------------------------------------------------------
 
+    def models(self, engine: str | None = None, *, refresh: bool = False) -> list[dict]:
+        """The models one or both engines offer, as ``ccx models --json``."""
+        from ccx.models import read_models
+        return [catalog.as_dict() for catalog in read_models(engine=engine, refresh=refresh)]
+
     def usage(self, engine: str | None = None, *, include_tokens: bool = False,
               timeout: float = 30) -> dict:
         """Account-scoped quota utilization for one or both providers.

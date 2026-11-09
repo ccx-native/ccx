@@ -56,6 +56,8 @@ from .types import (
     CompactOperationResult,
     CompactResult,
     Event,
+    ModelCatalog,
+    ModelInfo,
     PendingInput,
     Question,
     Report,
@@ -146,6 +148,8 @@ __all__ = [
     "CompactOperationResult",
     "WaitResult",
     "Event",
+    "ModelCatalog",
+    "ModelInfo",
     "Usage",
     # Codex types
     "CodexSessionInfo",

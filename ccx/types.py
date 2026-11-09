@@ -635,6 +635,108 @@ class Event:
 
 
 @dataclass(frozen=True)
+class ModelInfo:
+    """One selectable model name and its engine-neutral capabilities."""
+
+    id: str
+    resolved: str | None
+    display_name: str
+    description: str | None
+    alias: bool
+    default: bool
+    efforts: list[str] = field(default_factory=list)
+    default_effort: str | None = None
+    features: dict[str, bool] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "resolved": self.resolved,
+            "displayName": self.display_name,
+            "description": self.description,
+            "alias": self.alias,
+            "default": self.default,
+            "efforts": list(self.efforts),
+            "defaultEffort": self.default_effort,
+            "features": dict(self.features),
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict) -> "ModelInfo":
+        ident = value.get("id")
+        resolved = value.get("resolved")
+        name = value.get("displayName")
+        if (not isinstance(ident, str) or not ident
+                or (resolved is not None and not isinstance(resolved, str))
+                or not isinstance(name, str) or not name):
+            raise ValueError("invalid cached model")
+        efforts = value.get("efforts")
+        features = value.get("features")
+        return cls(
+            id=ident,
+            resolved=resolved,
+            display_name=name,
+            description=(value.get("description")
+                         if isinstance(value.get("description"), str) else None),
+            alias=(ident != resolved),
+            default=value.get("default") is True,
+            efforts=([s for s in efforts if isinstance(s, str)]
+                     if isinstance(efforts, list) else []),
+            default_effort=(value.get("defaultEffort")
+                            if isinstance(value.get("defaultEffort"), str) else None),
+            features=({
+                key: features[key] for key in ("fast", "auto", "thinkingOff")
+                if type(features.get(key)) is bool
+            } if isinstance(features, dict) else {}),
+        )
+
+
+@dataclass(frozen=True)
+class ModelCatalog:
+    """One engine's model list, with freshness and failure provenance."""
+
+    engine: str
+    engine_version: str | None
+    source: str
+    fetched_at: str
+    note: str | None
+    models: list[ModelInfo] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "engine": self.engine,
+            "engineVersion": self.engine_version,
+            "source": self.source,
+            "fetchedAt": self.fetched_at,
+            "note": self.note,
+            "models": [model.as_dict() for model in self.models],
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict) -> "ModelCatalog":
+        engine = value.get("engine")
+        fetched_at = value.get("fetchedAt")
+        models = value.get("models")
+        if (engine not in ("claude", "codex")
+                or not isinstance(fetched_at, str)
+                or not isinstance(models, list)):
+            raise ValueError("invalid cached model catalog")
+        entries = [ModelInfo.from_dict(item) for item in models
+                   if isinstance(item, dict)]
+        if not entries:
+            raise ValueError("empty cached model catalog")
+        version = value.get("engineVersion")
+        return cls(
+            engine=engine,
+            engine_version=version if isinstance(version, str) else None,
+            source="live",
+            fetched_at=fetched_at,
+            note=None,
+            models=entries,
+        )
+
+
+@dataclass(frozen=True)
 class Usage:
     """Live quota utilization plus provider-normalized session-reset status.
 
@@ -700,6 +802,8 @@ __all__ = [
     "SteerResult",
     "WaitResult",
     "Event",
+    "ModelInfo",
+    "ModelCatalog",
     "Usage",
     "FiveHourReset",
 ]

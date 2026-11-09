@@ -11,6 +11,7 @@ from ccx.cli.commands.read import (
     cmd_context, cmd_events, cmd_history, cmd_list, cmd_logs, cmd_peek,
     cmd_report, cmd_usage,
 )
+from ccx.cli.commands.models import cmd_models
 from ccx.cli.commands.turns import (
     cmd_answer, cmd_approve, cmd_compact, cmd_notify, cmd_reconcile, cmd_reject,
     cmd_respond, cmd_send, cmd_set, cmd_steer, cmd_vars, cmd_wait,
@@ -204,7 +205,7 @@ COMMAND_GROUPS = (
     ("Input requests", ("answer", "approve", "reject", "respond")),
     ("Inspect", ("list", "peek", "report", "history", "logs", "context", "events", "vars")),
     ("Manage", ("attach", "compact", "set", "kill", "shutdown")),
-    ("Account", ("usage",)),
+    ("Account", ("usage", "models")),
     ("Setup and automation", ("init", "skills", "untrust", "controller", "rpc")),
 )
 
@@ -1229,6 +1230,24 @@ def _add_control_parsers(sub) -> None:
 
 def _add_observability_parsers(sub) -> None:
     """Quota and session observation: usage, peek, events."""
+    pm = sub.add_parser(
+        "models",
+        help="List the models Claude and Codex offer.",
+        description=(
+            "Show the models each engine offers: the id to pass to --model, the "
+            "display name, the model a Claude alias points to now, and the efforts "
+            "it supports. Lists are kept for 24 hours; Claude's is fetched again "
+            "after a Claude Code update. If a list can't be fetched, the last one "
+            "is shown, marked stale."
+        ),
+    )
+    pm.add_argument("--engine", choices=("claude", "codex"),
+                    help="Only this engine (default: both).")
+    pm.add_argument("--json", action="store_true", help="Print the lists as JSON.")
+    pm.add_argument("--refresh", action="store_true",
+                    help="Fetch the lists now; exit 3 if one can't be fetched.")
+    pm.set_defaults(func=cmd_models)
+
     pu = sub.add_parser(
         "usage",
         help="Show your Claude or Codex account usage.",

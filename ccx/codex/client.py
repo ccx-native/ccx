@@ -44,6 +44,7 @@ from ccx.constants import (
     COMPACT_WAIT_DEFAULT_S,
     DEFAULT_IDLE_TIMEOUT_S,
 )
+from ccx.types import ModelCatalog
 from ccx.errors import (
     DeliveryRejected,
     InvalidRequest,
@@ -712,6 +713,11 @@ class CodexClient:
         """Return the latest cached carried-context measurement."""
         _worker, rec = self._owned_codex(target)
         return CodexContext.from_record(rec)
+
+    def models(self, *, refresh: bool = False) -> ModelCatalog:
+        """The models Codex offers, as ``ccx models --engine codex``."""
+        from ccx.models import read_models
+        return read_models(engine="codex", refresh=refresh)[0]
 
     def usage(
         self,

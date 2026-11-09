@@ -193,6 +193,14 @@ answer, or `options`/`text_answers` as `(question_index, value)` pairs.
 
 ## Account
 
+- `models(engine=None, *, refresh=False)`: the models one or both engines
+  offer, as `ccx models --json` prints them: a list with one dict per engine.
+  Each model has `id` (pass it as `model`), `displayName`, `resolved` (the
+  model an alias points to now; the same as `id` for full ids), `efforts`,
+  `defaultEffort` and `default`. `source` says where the list came from:
+  `live`, `cache`, `stale` (a fetch failed; `note` says why) or `builtin`
+  (nothing saved yet: Claude's bare aliases, or no Codex models). A failed
+  fetch doesn't raise.
 - `usage(engine=None, *, include_tokens=False)`: plan usage for one or both
   accounts, as `ccx usage` shows it. An engine that isn't installed or signed in
   is skipped.

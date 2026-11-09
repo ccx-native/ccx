@@ -106,8 +106,8 @@ def _short_lived_app_server(
             client.close()
 
 
-def list_models(*, cwd: str, timeout: float = 30) -> list[str]:
-    """Return every model ID advertised by Codex's stable ``model/list`` API."""
+def list_model_entries(*, cwd: str, timeout: float = 30) -> list[dict]:
+    """Return model/list's item dictionaries (default visibility, every page)."""
     try:
         with _short_lived_app_server(
             cwd=cwd,
@@ -115,18 +115,15 @@ def list_models(*, cwd: str, timeout: float = 30) -> list[str]:
             timeout=timeout,
             rejection_prefix="unsupported request during model list read",
         ) as client:
-            models: list[str] = []
+            entries: list[dict] = []
             cursor: str | None = None
             seen_cursors: set[str] = set()
             while True:
                 params = {"cursor": cursor} if cursor is not None else {}
                 page = client.request("model/list", params, timeout=timeout)
                 for item in page.get("data") or []:
-                    if not isinstance(item, dict):
-                        continue
-                    model_id = item.get("model") or item.get("id")
-                    if isinstance(model_id, str) and model_id and model_id not in models:
-                        models.append(model_id)
+                    if isinstance(item, dict):
+                        entries.append(item)
                 next_cursor = page.get("nextCursor")
                 if not isinstance(next_cursor, str) or not next_cursor:
                     break
@@ -134,13 +131,25 @@ def list_models(*, cwd: str, timeout: float = 30) -> list[str]:
                     raise RuntimeError("model/list returned a repeated cursor")
                 seen_cursors.add(next_cursor)
                 cursor = next_cursor
-            if not models:
-                raise RuntimeError("model/list returned no model IDs")
-            return models
+            if not entries:
+                raise RuntimeError("model/list returned no model entries")
+            return entries
     except (OSError, RuntimeError) as error:
         raise SessionUnavailable(
             f"Codex model list unavailable: {error}"
         ) from error
+
+
+def list_models(*, cwd: str, timeout: float = 30) -> list[str]:
+    """Return every model ID advertised by Codex's stable model/list API."""
+    models: list[str] = []
+    for item in list_model_entries(cwd=cwd, timeout=timeout):
+        model_id = item.get("model") or item.get("id")
+        if isinstance(model_id, str) and model_id and model_id not in models:
+            models.append(model_id)
+    if not models:
+        raise SessionUnavailable("Codex model list unavailable: model/list returned no model IDs")
+    return models
 
 
 def validate_model(model: str, *, cwd: str, timeout: float = 30) -> list[str]:
@@ -1421,6 +1430,7 @@ __all__ = [
     "daemon_stop",
     "ensure_daemon",
     "identity",
+    "list_model_entries",
     "list_models",
     "daemon_generation",
     "daemon_spawn_lock",

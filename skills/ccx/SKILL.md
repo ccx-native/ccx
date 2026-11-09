@@ -161,3 +161,6 @@ More in [references/troubleshooting.md](references/troubleshooting.md).
 - `ccx attach TARGET` opens the worker in a terminal; Ctrl-Z detaches.
 - `--cap-5h PCT` or `--cap-7d PCT` on `new` or `send` stops that turn when
   account usage reaches PCT%. `ccx usage` shows the current levels.
+- `ccx models` lists each engine's models and the efforts each supports. A
+  Claude alias such as `opus` can point to a newer model after a Claude Code
+  update; pass the full id from the Resolved column to stay on one model.

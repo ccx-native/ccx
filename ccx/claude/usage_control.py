@@ -1,4 +1,4 @@
-"""Promptless Claude Code usage control protocol; no credential or transcript reads."""
+"""Promptless Claude Code usage and model control protocol; no credential reads."""
 
 from __future__ import annotations
 
@@ -22,18 +22,20 @@ _MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 _MAX_LINE_BYTES = 1 * 1024 * 1024
 
 
-def request_usage(timeout: float = 8.0) -> dict:
-    """Return {kind, body?, raw?, error?} from one bounded get_usage exchange.
+def _control_exchange(requests: list[dict], timeout: float, cwd: str | None = None) -> dict:
+    """Send a list of requests through one bounded promptless child.
 
-    The native CLI owns auth. The only input consists of initialize/get_usage
-    control requests; no model prompt, hooks, MCP server or transcript scan.
+    Initialize replies are projected immediately: the full response can also
+    contain personal account data, which must never leave this transport.
     """
     timeout = max(0.1, float(timeout))
-    start = time.monotonic()
-    deadline = start + timeout
-    init_id, usage_id = uuid.uuid4().hex, uuid.uuid4().hex
+    deadline = time.monotonic() + timeout
+    ids = [(uuid.uuid4().hex, request) for request in requests]
+    target_id = ids[-1][0]
+    subtypes = {rid: request["subtype"] for rid, request in ids}
     child = None
-    reply = None
+    replies: dict[str, dict] = {}
+    seen_target = False
     invalid_line = None
     total_bytes = 0
     buffer = b""
@@ -41,17 +43,14 @@ def request_usage(timeout: float = 8.0) -> dict:
     try:
         child = subprocess.Popen(
             [CLAUDE_BIN, *_PROBE_ARGS], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=cwd,
         )
-        for rid, request in (
-            (init_id, {"subtype": "initialize"}),
-            (usage_id, {"subtype": "get_usage", "skip_behaviors": True}),
-        ):
+        for rid, request in ids:
             message = {"type": "control_request", "request_id": rid, "request": request}
             child.stdin.write((json.dumps(message, separators=(",", ":")) + "\n").encode())
         child.stdin.flush()
 
-        while time.monotonic() < deadline and reply is None and problem is None:
+        while time.monotonic() < deadline and not seen_target and problem is None:
             readable, _, _ = select.select(
                 [child.stdout], [], [], min(0.2, max(0, deadline - time.monotonic()))
             )
@@ -85,11 +84,31 @@ def request_usage(timeout: float = 8.0) -> dict:
                 response = message.get("response")
                 if not isinstance(response, dict):
                     continue
-                if response.get("request_id") == init_id and response.get("subtype") == "error":
+                rid = response.get("request_id")
+                if rid not in subtypes:
+                    continue
+                subtype = subtypes[rid]
+                if subtype == "initialize" and response.get("subtype") == "error":
                     problem = "Claude usage initialize control request failed"
                     break
-                if response.get("request_id") == usage_id:
-                    reply = message
+                if subtype == "initialize":
+                    body = response.get("response")
+                    # Do not retain the rest of initialize (notably 'account').
+                    safe_body = ({
+                        "models": body.get("models"),
+                        "claude_code_version": body.get("claude_code_version"),
+                    } if isinstance(body, dict) else None)
+                    message = {
+                        "type": "control_response",
+                        "response": {
+                            "request_id": rid,
+                            "subtype": response.get("subtype"),
+                            "response": safe_body,
+                        },
+                    }
+                replies[subtype] = message
+                if rid == target_id:
+                    seen_target = True
                     break
         # Always close stdin after the matching response, or on a bounded failure.
         child.stdin.close()
@@ -100,7 +119,7 @@ def request_usage(timeout: float = 8.0) -> dict:
         except subprocess.TimeoutExpired:
             problem = problem or "Claude usage control timed out"
             exit_code = None
-        if reply is None:
+        if not seen_target:
             if problem is None:
                 problem = "Claude usage control returned no matching response"
             if invalid_line is not None:
@@ -109,28 +128,7 @@ def request_usage(timeout: float = 8.0) -> dict:
             return {"kind": "error", "error": problem}
         if problem is not None or exit_code not in (0, None):
             return {"kind": "error", "error": problem or "Claude usage control exited unsuccessfully"}
-        response = reply["response"]
-        if response.get("subtype") == "error":
-            return {"kind": "error", "error": "Claude usage control response was an error"}
-        if response.get("subtype") != "success":
-            return {"kind": "unparsed", "raw": reply,
-                    "error": "Claude usage control returned an unknown response subtype"}
-        body = response.get("response")
-        if not isinstance(body, dict):
-            return {"kind": "unparsed", "raw": reply,
-                    "error": "Claude usage control returned an unknown JSON body"}
-        if body.get("rate_limits_available") is False and body.get("rate_limits") is None:
-            return {"kind": "unavailable", "error": "Claude plan rate limits unavailable"}
-        if body.get("rate_limits_available") is True and body.get("rate_limits") is None:
-            return {"kind": "held", "error": "Claude plan usage is held by the provider"}
-        rate_limits = body.get("rate_limits")
-        if isinstance(rate_limits, dict) and any(k in rate_limits for k in (
-            "five_hour", "seven_day", "limits", "model_scoped", "extra_usage",
-            "seven_day_opus", "seven_day_sonnet",
-        )):
-            return {"kind": "success", "body": rate_limits}
-        return {"kind": "unparsed", "raw": reply,
-                "error": "Claude usage control returned an unrecognized rate_limits field"}
+        return {"kind": "success", "responses": replies}
     except (OSError, ValueError, BrokenPipeError) as exc:
         return {"kind": "error", "error": f"Claude usage control unavailable: {type(exc).__name__}"}
     finally:
@@ -150,3 +148,57 @@ def request_usage(timeout: float = 8.0) -> dict:
                         child.wait(timeout=1.0)
             if child.stdout is not None:
                 child.stdout.close()
+
+
+def request_usage(timeout: float = 8.0) -> dict:
+    """Return {kind, body?, raw?, error?} from one bounded get_usage exchange.
+
+    The native CLI owns auth. The only input consists of initialize/get_usage
+    control requests; no model prompt, hooks, MCP server or transcript scan.
+    """
+    result = _control_exchange([
+        {"subtype": "initialize"},
+        {"subtype": "get_usage", "skip_behaviors": True},
+    ], timeout)
+    if result["kind"] != "success":
+        return result
+    reply = result["responses"]["get_usage"]
+    response = reply["response"]
+    if response.get("subtype") == "error":
+        return {"kind": "error", "error": "Claude usage control response was an error"}
+    if response.get("subtype") != "success":
+        return {"kind": "unparsed", "raw": reply,
+                "error": "Claude usage control returned an unknown response subtype"}
+    body = response.get("response")
+    if not isinstance(body, dict):
+        return {"kind": "unparsed", "raw": reply,
+                "error": "Claude usage control returned an unknown JSON body"}
+    if body.get("rate_limits_available") is False and body.get("rate_limits") is None:
+        return {"kind": "unavailable", "error": "Claude plan rate limits unavailable"}
+    if body.get("rate_limits_available") is True and body.get("rate_limits") is None:
+        return {"kind": "held", "error": "Claude plan usage is held by the provider"}
+    rate_limits = body.get("rate_limits")
+    if isinstance(rate_limits, dict) and any(k in rate_limits for k in (
+        "five_hour", "seven_day", "limits", "model_scoped", "extra_usage",
+        "seven_day_opus", "seven_day_sonnet",
+    )):
+        return {"kind": "success", "body": rate_limits}
+    return {"kind": "unparsed", "raw": reply,
+            "error": "Claude usage control returned an unrecognized rate_limits field"}
+
+
+def request_models(timeout: float = 8.0) -> dict:
+    """Return only Claude's model entries and version from initialize."""
+    # From home, so one project's settings can't shape the shared catalog.
+    result = _control_exchange([{"subtype": "initialize"}], timeout,
+                               cwd=os.path.expanduser("~"))
+    if result["kind"] != "success":
+        # Do not return raw stdout; initialize may include private account data.
+        return {"kind": "error", "error": result.get("error") or "Claude model probe failed"}
+    response = result["responses"]["initialize"]["response"]
+    if response.get("subtype") != "success":
+        return {"kind": "error", "error": "Claude model initialize failed"}
+    body = response.get("response")
+    if not isinstance(body, dict) or not isinstance(body.get("models"), list):
+        return {"kind": "error", "error": "Claude model initialize returned no models"}
+    return {"kind": "success", "body": body}

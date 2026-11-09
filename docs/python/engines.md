@@ -46,6 +46,7 @@ Code's own options besides the usual ones: `agent`, `append_system_prompt`,
 | `context(w)` | `ClaudeContext`: tokens used; window size and percentage are `None`. |
 | `events(w)` / `subscribe(w)` | Claude's own event records, as typed `Event` objects. |
 | `usage()` | Claude plan usage as a `Usage` object. |
+| `models(*, refresh=False)` | Claude's models as a `ModelCatalog`, with the fields of [`WorkerClient.models()`](workers.md#account) in snake_case. |
 
 **Delivery.** `steer_status(w, delivery_id)` and `delivery_status(w,
 delivery_id)` look up an earlier steer or send without sending anything.
@@ -71,6 +72,7 @@ codex = CodexClient()
 | `telemetry(w, *, after_cursor=None)` | Token use and tool activity per turn, in pages. |
 | `approve(w, *, request_id)` / `reject(w, *, request_id)` | Decide one request; here `request_id` is required. |
 | `usage(*, tokens=False)` | Codex plan usage, or with `tokens=True` token activity. |
+| `models(*, refresh=False)` | Codex's models as a `ModelCatalog`. |
 
 ## Known limitations
 

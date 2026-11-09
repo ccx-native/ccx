@@ -197,7 +197,7 @@ _AUTO_INIT_COMMANDS = frozenset({
     "wait", "notify", "answer", "approve", "reject", "respond",
     "set", "compact", "stop", "kill", "attach", "shutdown", "untrust",
     "vars", "list", "logs", "history", "report", "context", "peek", "events",
-    "usage", "controller",
+    "usage", "models", "controller",
 })
 
 

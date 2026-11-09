@@ -89,6 +89,7 @@ from .types import (
     CompactOperationResult,
     Event,
     FiveHourReset,
+    ModelCatalog,
     Report,
     PendingInput,
     SemanticDeliveryResult,
@@ -1846,6 +1847,11 @@ class CcxClient:
             raise SessionUnavailable(
                 f"subscribe: original source unavailable: {exc}"
             ) from exc
+
+    def models(self, *, refresh: bool = False) -> ModelCatalog:
+        """The models Claude Code offers, as ``ccx models --engine claude``."""
+        from ccx.models import read_models
+        return read_models(engine="claude", refresh=refresh)[0]
 
     def usage(self, *, cached: bool = False) -> Usage:
         """Live quota utilization (the signal usage caps enforce). With

@@ -7,6 +7,12 @@ All notable changes to ccx are documented here. The format follows
 
 ### Added
 
+- `ccx models` lists the models Claude and Codex offer: the id to pass to
+  `--model`, the display name, the model a Claude alias such as `opus` points
+  to now, and the efforts each model supports. `--json` prints the lists as
+  JSON, and `WorkerClient.models()` returns them in Python. Lists are kept for
+  24 hours, and Claude's is fetched again after a Claude Code update;
+  `--refresh` fetches them now.
 - `ccx history` reads past conversations of the workers you name as text, or
   searches them. With no options it shows recent turns as an outline;
   `--turns` reads exact turns or one message; `--grep`, `--cmd` (the commands

@@ -11,8 +11,9 @@ C=$(ccx new --engine codex --cwd ~/repo --model gpt-6-luna --effort low \
       "Inspect the failing tests")
 ```
 
-- **Models** use their full ids (`gpt-6-luna`, `gpt-6.1-sol`, ...). An unknown
-  model is refused before anything is created, with the list of valid ones.
+- **Models** use their full ids (`gpt-6-luna`, `gpt-6.1-sol`, ...).
+  `ccx models --engine codex` lists them. An unknown model is refused before
+  anything is created, with the list of valid ones.
   Without `--model` and `--effort`, Codex's own configuration decides.
 - **Project context** works as it does in Codex: the worker reads `AGENTS.md`,
   skills and configuration from its folder. ccx doesn't change your Codex login
