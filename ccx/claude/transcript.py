@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import difflib
 import hashlib
 from contextlib import ExitStack, contextmanager
 import io
@@ -360,7 +361,7 @@ _ESCAPED_PASTED_CONTENT_RE = re.compile(
 # Claude stores a typed `<pasted_content>` tag escaped as `<\\pasted_content>`.
 _ESCAPED_TAG_RE = re.compile(r"<\\(/?pasted_content)")
 # Claude turns a prompt that is only an image path into an `[Image #N]` row.
-_IMAGE_PATH_RE = re.compile(r"^[/~][^\n]*\.(?:png|jpe?g|gif|webp)$", re.IGNORECASE)
+BARE_IMAGE_PATH_RE = re.compile(r"^[/~][^\n]*\.(?:png|jpe?g|gif|webp)$", re.IGNORECASE)
 _IMAGE_PLACEHOLDER_RE = re.compile(r"^\[Image #\d+\]$")
 
 
@@ -382,7 +383,26 @@ def prompt_matches(expected: str, actual: str | None) -> bool:
     ``[Image #N]`` placeholder Claude stores in its place."""
     actual = normalize_semantic_prompt_text(actual).strip()
     return bool(expected) and (actual == expected or bool(
-        _IMAGE_PATH_RE.match(expected) and _IMAGE_PLACEHOLDER_RE.match(actual)))
+        BARE_IMAGE_PATH_RE.match(expected) and _IMAGE_PLACEHOLDER_RE.match(actual)))
+
+
+def prompt_mismatch_event(delivery_id: str, expected: str, actual: str | None) -> dict:
+    """A host event describing how native prompt text ``actual`` differs from
+    the sent prompt ``expected`` (already normalized and stripped), without
+    any of the text: sizes, hash prefixes, how many spans differ, and whether
+    it is the same characters in another order (a reordered paste)."""
+    actual = normalize_semantic_prompt_text(actual).strip()
+    spans = difflib.SequenceMatcher(None, expected, actual, autojunk=False).get_opcodes()
+    return {
+        "type": "semantic_prompt_mismatch",
+        "delivery_id": delivery_id,
+        "expected_chars": len(expected),
+        "actual_chars": len(actual),
+        "expected_sha256": hashlib.sha256(expected.encode()).hexdigest()[:16],
+        "actual_sha256": hashlib.sha256(actual.encode()).hexdigest()[:16],
+        "changed_spans": sum(op != "equal" for op, *_ in spans),
+        "same_characters": sorted(expected) == sorted(actual),
+    }
 
 
 def exact_user_prompt_event(

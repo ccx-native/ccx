@@ -127,6 +127,7 @@ from ccx.claude.transcript import (
     is_compact_command_text,
     normalize_semantic_prompt_text,
     prompt_matches,
+    prompt_mismatch_event,
     queued_prompt_accepted,
     read_ai_title,
     refresh_context_observation,
@@ -269,6 +270,18 @@ def _interrupt_refusal_for_delivery(slot: dict | None) -> str | None:
     if slot.get("route") == "steer":
         return "a steer is being handed to Claude; retry in a few seconds"
     return "a message is being handed to Claude; retry in a few seconds"
+
+
+def unresolved_delivery_refusal(delivery_id: str, receipt: dict | None) -> str:
+    """Why a send is refused while an earlier delivery is unresolved."""
+    if (receipt or {}).get("evidenceStatus") == "foreign-start-after-possible-write":
+        return (f"Claude started a turn whose text didn't match an earlier message "
+                f"(delivery {delivery_id}), so CCX can't tell whether that message "
+                "was delivered. `ccx kill` the worker to clear it (the conversation "
+                "is kept).")
+    return (f"An earlier message (delivery {delivery_id}) is still unresolved; "
+            "wait for it, or if it is stuck, `ccx kill` the worker to clear it "
+            "(the conversation is kept).")
 
 
 def _semantic_slot_from_receipt(receipt: dict, hot: dict | None = None) -> dict:
@@ -1179,9 +1192,7 @@ def _run_host(args):
             if prior is not None and prior.get("state") in ("accepted", "rejected", "delivered", "abandoned"):
                 state["semantic_delivery"] = None
             else:
-                return (f"An earlier message (delivery {delivery_id}) is still unresolved; "
-                        "wait for it, or if it is stuck, `ccx kill` the worker to clear it "
-                        "(the conversation is kept).")
+                return unresolved_delivery_refusal(delivery_id, prior)
         if state.get("compacting") is not None or state.get("compact_clear") is not None:
             return "Compaction is in progress; try again after it finishes."
         if state.get("pending_permission"):
@@ -2677,6 +2688,8 @@ def _run_host(args):
 
         # A mismatched prompt is foreign. If our write may already exist, this
         # only makes the semantic placement ambiguous; it never permits resend.
+        if slot.get("maybe_written"):
+            broadcast(prompt_mismatch_event(slot["delivery_id"], expected, prompt))
         semantic_foreign_turn_start("user-prompt-submit")
         return False
 

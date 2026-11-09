@@ -42,6 +42,13 @@ All notable changes to ccx are documented here. The format follows
 
 ### Fixed
 
+- A message to a Claude worker with an image file name on its own line (for
+  example `image.png` where a screenshot was) no longer arrives out of order
+  and leaves the worker refusing every later send until `ccx kill`. Such a
+  name is now sent as plain text; only a message that is just an image path
+  is still attached as the image. When Claude starts a turn whose text
+  doesn't match the message, the refusal now says so.
+
 - `ccx stop` on a Claude worker no longer refuses while a steer is waiting
   for the next tool boundary. The turn stops and the steer runs as the next
   turn. It still asks you to retry while a message is being handed to Claude.

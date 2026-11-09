@@ -19,6 +19,19 @@ from ccx.constants import (
     PTY_QUIESCENCE_S,
     PTY_WRITE_TIMEOUT_S,
 )
+from ccx.claude.transcript import BARE_IMAGE_PATH_RE
+
+# Claude (2.1.319) checks every pasted line that, trimmed, unquoted and with
+# backslash escapes removed, ends in .png, .jpg, .jpeg, .gif or .webp: it
+# looks for the image file asynchronously and inserts the paste only then,
+# after any pastes that arrived meanwhile, and drops an Enter pressed during
+# the check. So a paste boundary goes right after the dot of every image
+# extension. More formats than Claude checks today: extra boundaries are free.
+_IMAGE_EXTENSIONS = ("png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg",
+                     "avif", "heic", "heif", "tif", "tiff")
+_IMAGE_EXTENSION_DOT = re.compile(
+    r"\.(?=\\*(?:%s))" % "|".join(r"\\*".join(ext) for ext in _IMAGE_EXTENSIONS),
+    re.IGNORECASE)
 
 
 def set_winsize(fd, rows, cols):
@@ -70,7 +83,13 @@ def paste_chunks(text: str, max_newlines: int,
     A CRLF pair is never split. Returns None when the text has a line break but
     no paste may carry one (a PTY under ``PASTE_INLINE_ROWS_RESERVED + 1``
     rows), so the caller falls back to a single paste.
+
+    No paste holds an image extension whole (see ``_IMAGE_EXTENSION_DOT``),
+    except in a prompt that is only an image path, which Claude attaches as
+    the image.
     """
+    breaks = (set() if BARE_IMAGE_PATH_RE.match(text.strip())
+              else {m.end() for m in _IMAGE_EXTENSION_DOT.finditer(text)})
     chunks: list[str] = []
     cur: list[str] = []
     units = newlines = 0
@@ -83,7 +102,7 @@ def paste_chunks(text: str, max_newlines: int,
         if is_newline and max_newlines < 1:
             return None
         cost = 4 if ch == "\t" else 2 if ord(ch[0]) > 0xFFFF else 1
-        if cur and units + cost > max_units:
+        if cur and (units + cost > max_units or i in breaks):
             chunks.append("".join(cur))
             cur, units, newlines = [], 0, 0
         cur.append(ch)
