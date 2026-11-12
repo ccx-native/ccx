@@ -1271,23 +1271,33 @@ class BackgroundTaskReducer:
 
                 parsed_id = output_file = None
                 if isinstance(body, str):
-                    # The native Bash launch notice is the result's own head.
-                    # A foreground command (e.g. `ccx peek other-worker`) may
-                    # print another worker's tool history, including the same
-                    # notice inside ordinary stdout. Searching the whole body
-                    # would falsely claim that foreign task as ours forever.
-                    notice = body.lstrip()
-                    if notice.startswith("Command running in background with ID:"):
-                        m = _BG_LAUNCH_ID_RE.search(notice)
-                    elif notice.startswith("Command did not complete within"):
-                        m = _BG_AUTO_LAUNCH_ID_RE.search(notice)
-                    else:
-                        m = None
-                    if m:
-                        parsed_id = m.group(1)
-                        mo = _BG_OUTPUT_FILE_RE.search(notice)
-                        if mo:
-                            output_file = mo.group(1).rstrip(".")
+                    # Only this result's own launch counts. A foreground
+                    # command (e.g. `ccx peek other-worker`) may print another
+                    # worker's launch notice in its stdout; claiming that task
+                    # would keep it open here forever. Claude records the id
+                    # in toolUseResult.backgroundTaskId; without it, accept
+                    # only a notice that heads the result.
+                    if bg_id is None:
+                        notice = body.lstrip()
+                        if notice.startswith("Command running in background with ID:"):
+                            m = _BG_LAUNCH_ID_RE.search(notice)
+                        elif notice.startswith("Command did not complete within"):
+                            m = _BG_AUTO_LAUNCH_ID_RE.search(notice)
+                        else:
+                            m = None
+                        parsed_id = m.group(1) if m else None
+                    launched = bg_id or parsed_id
+                    if launched:
+                        # A command moved to the background after its timeout
+                        # prints its output so far before the notice, so match
+                        # the output path by task id rather than position.
+                        output_file = next((
+                            path
+                            for mo in _BG_OUTPUT_FILE_RE.finditer(body)
+                            if (path := mo.group(1).rstrip(".")).endswith(
+                                f"/{launched}.output"
+                            )
+                        ), None)
                 parsed_monitor_id = None
                 if isinstance(body, str) and body.startswith("Monitor started (task "):
                     mm = _MONITOR_LAUNCH_ID_RE.search(body)

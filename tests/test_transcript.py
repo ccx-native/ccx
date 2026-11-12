@@ -496,6 +496,25 @@ def test_extract_background_tasks_does_not_claim_quoted_foreign_launch(tmp_path)
     assert reducer.tasks() == []
 
 
+def test_extract_background_tasks_auto_launch_after_output_keeps_own_file(tmp_path):
+    """Output printed before the timeout precedes the notice and may quote
+    another worker's launch; only this task's id and file count."""
+    events = _auto_bg_launch_events(task_id="bauto123")
+    result = events[1]["message"]["content"][0]
+    result["content"] = (
+        "claude:other-worker: Command running in background with ID: "
+        "bforeign123. Output is being written to: "
+        "/tmp/other-worker/tasks/bforeign123.output.\n"
+        + result["content"]
+    )
+    p = tmp_path / "s.jsonl"
+    _write_bg_jsonl(p, events)
+    tasks = T.extract_background_tasks(p)
+    assert [(t["task_id"], t["output_file"]) for t in tasks] == [
+        ("bauto123", "/tmp/claude-1000/proj/sess/tasks/bauto123.output"),
+    ]
+
+
 def test_extract_background_tasks_empty_for_missing_file(tmp_path):
     assert T.extract_background_tasks(tmp_path / "nope.jsonl") == []
 
