@@ -3,7 +3,7 @@
 All notable changes to ccx are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.2.0] - 2026-11-12
 
 ### Added
 
@@ -22,6 +22,12 @@ All notable changes to ccx are documented here. The format follows
   and shape the output. Reasoning is never shown. Codex histories are read
   from Codex's local history database when possible, which takes
   milliseconds instead of minutes on long threads.
+- Up to 8 terminals can use `ccx attach` on the same Claude worker. They
+  share its screen and can all type, and Ctrl-Z detaches only that terminal.
+  The screen takes the smallest size among them.
+- `ccx logs` items on Claude workers carry their own time (`startedAtMs`, and
+  `completedAtMs` for tool calls), injected Claude rows are marked `meta`, and
+  Codex notification results keep their `namespace`.
 
 ### Changed
 
@@ -46,8 +52,26 @@ All notable changes to ccx are documented here. The format follows
   Read a conversation as text with `ccx history`; programs keep the default
   JSON. `CcxClient.logs()` in Python is unchanged.
 
+### Removed
+
+- The per-worker `transcript.json` file and the worker record's
+  `transcriptJson` field. `ccx logs` still renders the conversation on demand.
+
 ### Fixed
 
+- A Claude worker now gets a fresh idle timeout when its last background
+  task finishes. Before, if the timeout had run out while the task was
+  running, the worker stopped right away, before Claude could act on the
+  result.
+- A Claude worker no longer lists another worker's background task as its
+  own when a command such as `ccx peek other-worker` prints that task.
+- Reading a Claude conversation no longer fails when a message queued during
+  a turn carries an image.
+- A crashed Codex worker's `lastError` now includes Codex's own error
+  message, such as a rate limit, when there is one. Before, it said only
+  "Codex thread system error".
+- `ccx events --follow` no longer waits for the next heartbeat to report a
+  worker whose process stopped.
 - A message to a Claude worker with an image file name on its own line (for
   example `image.png` where a screenshot was) no longer arrives out of order
   and leaves the worker refusing every later send until `ccx kill`. Such a
@@ -78,17 +102,6 @@ All notable changes to ccx are documented here. The format follows
 - `ccx logs` no longer shows an empty first turn on recent Claude workers, and
   no longer includes Claude Code's session records, which held account and
   organization IDs.
-
-### Added
-
-- `ccx logs` items on Claude workers carry their own time (`startedAtMs`, and
-  `completedAtMs` for tool calls), injected Claude rows are marked `meta`, and
-  Codex notification results keep their `namespace`.
-
-### Removed
-
-- The per-worker `transcript.json` file and the worker record's
-  `transcriptJson` field. `ccx logs` still renders the conversation on demand.
 
 ## [0.1.0] - 2026-11-03
 

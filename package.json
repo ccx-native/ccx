@@ -1,6 +1,6 @@
 {
   "name": "ccx-native",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Native Claude Code and Codex sessions shared by your agents, scripts and terminals. Works with your own Claude and ChatGPT subscriptions.",
   "author": "Fernando <ccx@delega.ai>",
   "license": "MIT",
