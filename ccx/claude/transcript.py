@@ -1271,15 +1271,23 @@ class BackgroundTaskReducer:
 
                 parsed_id = output_file = None
                 if isinstance(body, str):
-                    m = (
-                        _BG_LAUNCH_ID_RE.search(body)
-                        or _BG_AUTO_LAUNCH_ID_RE.search(body)
-                    )
+                    # The native Bash launch notice is the result's own head.
+                    # A foreground command (e.g. `ccx peek other-worker`) may
+                    # print another worker's tool history, including the same
+                    # notice inside ordinary stdout. Searching the whole body
+                    # would falsely claim that foreign task as ours forever.
+                    notice = body.lstrip()
+                    if notice.startswith("Command running in background with ID:"):
+                        m = _BG_LAUNCH_ID_RE.search(notice)
+                    elif notice.startswith("Command did not complete within"):
+                        m = _BG_AUTO_LAUNCH_ID_RE.search(notice)
+                    else:
+                        m = None
                     if m:
                         parsed_id = m.group(1)
-                    mo = _BG_OUTPUT_FILE_RE.search(body)
-                    if mo:
-                        output_file = mo.group(1).rstrip(".")
+                        mo = _BG_OUTPUT_FILE_RE.search(notice)
+                        if mo:
+                            output_file = mo.group(1).rstrip(".")
                 parsed_monitor_id = None
                 if isinstance(body, str) and body.startswith("Monitor started (task "):
                     mm = _MONITOR_LAUNCH_ID_RE.search(body)

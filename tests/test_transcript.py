@@ -467,6 +467,35 @@ def test_extract_background_tasks_ignores_foreground_bash(tmp_path):
     assert T.extract_background_tasks(p) == []
 
 
+def test_extract_background_tasks_does_not_claim_quoted_foreign_launch(tmp_path):
+    """A foreground command's stdout can quote another CCX worker's task."""
+    tool_id = "toolu_foreign_peek"
+    foreign_id = "bforeign123"
+    rows = [
+        {"type": "assistant", "timestamp": "2026-01-01T00:00:01Z", "message": {"content": [
+            {"type": "tool_use", "id": tool_id, "name": "Bash", "input": {
+                "command": "ccx peek other-worker --status", "description": "Read other worker"
+            }},
+        ]}},
+        {"type": "user", "timestamp": "2026-01-01T00:00:02Z", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": tool_id,
+             "content": (
+                 "claude:other-worker: idle\n"
+                 "  recent turn: Command running in background with ID: "
+                 f"{foreign_id}. Output is being written to: "
+                 f"/tmp/other-worker/tasks/{foreign_id}.output."
+             )},
+        ]}, "toolUseResult": {"stdout": "other worker status", "exitCode": 0}},
+    ]
+    p = tmp_path / "session.jsonl"
+    _write_bg_jsonl(p, rows)
+    assert T.extract_background_tasks(p) == []
+    reducer = T.BackgroundTaskReducer()
+    for row in rows:
+        reducer.feed(row)
+    assert reducer.tasks() == []
+
+
 def test_extract_background_tasks_empty_for_missing_file(tmp_path):
     assert T.extract_background_tasks(tmp_path / "nope.jsonl") == []
 
