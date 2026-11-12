@@ -1033,6 +1033,16 @@ def _run_host(args):
                 continue
             new_items = current_bg_items()
             changes = diff_items(bg["items"], new_items)
+            if (state["current"] == S.IDLE
+                    and any(item["status"] == "running" for item in bg["items"])
+                    and not any(item["status"] == "running" for item in new_items)):
+                # Native background work was not user idleness. Its final
+                # completion starts a NEW configured idle window, allowing
+                # Claude's queued completion notification to begin its turn.
+                # No new polling, fixed grace duration, state/turn invention,
+                # or replayed bootstrap facts; only this fresh native edge.
+                state["last_activity"] = time.time()
+                state["bg_idle_grace"] = False
             bg["items"] = new_items
             if publish and changes:
                 publish_bg(new_items, changes)
@@ -4935,9 +4945,14 @@ def _run_host(args):
                             state["bg_idle_grace"] = True
                             broadcast({"type": "idle_grace_bg", "idle_for_s": idle_for})
                     else:
-                        set_state(S.IDLE_KILLED, reason=f"idle for {idle_for:.0f}s > timeout {idle_timeout_s}s")
-                        broadcast({"type": "idle_killed", "idle_for_s": idle_for})
-                        break
+                        # The forced read above can observe the last task's
+                        # completion and restart the idle clock. Do not reuse
+                        # the pre-read overdue value and kill on that edge.
+                        idle_for = time.time() - state["last_activity"]
+                        if idle_for > idle_timeout_s:
+                            set_state(S.IDLE_KILLED, reason=f"idle for {idle_for:.0f}s > timeout {idle_timeout_s}s")
+                            broadcast({"type": "idle_killed", "idle_for_s": idle_for})
+                            break
 
             # Boot watchdog. BOOTING only ends on a SessionStart hook; if Claude
             # blocks before that (un-pre-seeded --add-dir trust dialog, onboarding
