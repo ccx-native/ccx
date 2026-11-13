@@ -49,6 +49,20 @@ For example `stopped` covers `idle-killed` (unloaded after idling), `dead`
 - `stop` requests cancellation of the running turn; the worker stays up.
   [Background work](#background-work) can keep running.
 
+**Images.** To send images, put each image's absolute path on a line of its own
+in the message of `new`, `send`, `steer` or `fork`:
+
+```bash
+ccx send "$W" $'What is wrong in this screenshot?\n/home/me/shots/error.png'
+```
+
+A line becomes an image when it is only the absolute path of an existing .png,
+.jpg, .jpeg, .gif or .webp file. Other lines stay text, including a path inside
+a sentence, a `~/` or relative path, and a path to a missing file. You can send
+several images, with or without text; the worker gets them in order, before the
+text. Keep the files until ccx confirms delivery. On Claude, a message whose
+image doesn't load within 15 seconds is rejected.
+
 Each `send` or `steer` has a **delivery id**, generated unless you pass
 `--delivery-id`. Repeating the same message with that id never delivers twice.
 `ccx reconcile` looks up what happened to an id, for example after a lost

@@ -159,6 +159,9 @@ More in [references/troubleshooting.md](references/troubleshooting.md).
 
 - `ccx fork TARGET ["prompt"]` copies a settled conversation into a new worker.
 - `ccx attach TARGET` opens the worker in a terminal; Ctrl-Z detaches.
+- To send images, put each image's absolute path on a line of its own in the
+  message of `new`, `send`, `steer` or `fork` (.png, .jpg, .jpeg, .gif or
+  .webp). Keep the files until delivery is confirmed. Other paths stay text.
 - `--cap-5h PCT` or `--cap-7d PCT` on `new` or `send` stops that turn when
   account usage reaches PCT%. `ccx usage` shows the current levels.
 - `ccx models` lists each engine's models and the efforts each supports. A

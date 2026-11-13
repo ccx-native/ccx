@@ -3,6 +3,26 @@
 All notable changes to ccx are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- Messages can carry images, for Claude and Codex workers alike. In `new`,
+  `send`, `steer` or `fork`, a line that is only the absolute path of an
+  existing .png, .jpg, .jpeg, .gif or .webp file is sent as an image. Other
+  lines stay text, including a path inside a sentence.
+
+### Changed
+
+- On a Claude worker, a message that is only a `~/` image path now stays text;
+  use an absolute path to send the image.
+
+### Fixed
+
+- A Claude worker now waits for each image to load, up to 15 seconds, before
+  ccx presses Enter. Before, a large image could get the send rejected because
+  Enter arrived while the image was still loading.
+
 ## [0.2.0] - 2026-11-12
 
 ### Added
