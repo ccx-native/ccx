@@ -135,7 +135,8 @@ from ccx.claude.transcript import (
 from ccx.claude.usage import _merge_caps, cap_tripped, fetch_usage, read_usage_cached, unknown_cap_metrics
 from ccx.claude.host.events import _count_lines, _elicitation_request, _hook_tool_use_id, _oldest_native_gate, _open_event_journal, _permission_preview, _rotate_events_file, _stamp_event, _subagent_finished_event, _tool_finished_event, _tool_started_event
 from ccx.claude.host.hooks import _read_interrupt_marker, _read_new_api_error
-from ccx.claude.host.pty import clear_input_bytes, drain_bytes, get_winsize_rows, inline_paste_newline_cap, paste_bytes, paste_chunks, prompt_paste, pty_tail_reason, set_winsize, stalled_paste_clear_action, unstick_bytes, write_all
+from ccx.prompt_images import split_prompt_images
+from ccx.claude.host.pty import paste_image, clear_input_bytes, drain_bytes, get_winsize_rows, inline_paste_newline_cap, paste_bytes, paste_chunks, prompt_paste, pty_tail_reason, set_winsize, stalled_paste_clear_action, unstick_bytes, write_all
 from ccx.claude.host.subagents import _hook_subagent_id, _native_hook_descendant, _subagent_tool_finished_event, _subagent_tool_started_event, clear_subagent_taint, hook_fired_ms, note_subagent_taint, notification_elicitation_dialog, notification_elicitation_settled, notification_sets_waiting, subagent_boundary_reply
 from ccx.claude.host.successor import bind_accepted_original_new_turn, compact_displaced_by_prompt, compact_settle_fence, guarded_hook_is_late_while_tainted, hook_prompt_id, input_ready_pty_read, input_surface_write_blocked, interrupt_native_idle_after_escape, post_compact_hold_may_release, queued_steer_needs_successor_hold, settling_grace_elapsed, successor_attribution, successor_hold_quiescence_is_fresh, successor_hold_should_release
 
@@ -2218,19 +2219,30 @@ def _run_host(args):
             return DEFAULT_PTY_ROWS
 
     def stage_paste(text: str) -> tuple[float, int] | None:
-        """Write whole inline paste frames while letting Ink consume each one."""
+        """Stage images to completion, then write the remaining inline text."""
+        state.pop("paste_failure_reason", None)
+        images, text = split_prompt_images(text)
+        for path in images:
+            if not paste_image(master_fd, path, write=write_pty,
+                               on_read=read_pty_output, output=lambda: state["pty_buf"]):
+                state["paste_failure_reason"] = (
+                    f"Claude did not render a new image placeholder for {path}; "
+                    "image paste failed or timed out")
+                return None
+        if not text:
+            return PASTE_SUBMIT_DELAY_S, len(images)
         chunks = paste_chunks(text, inline_paste_newline_cap(pty_rows()))
         if chunks is None:
             payload, delay, pastes = prompt_paste(text, pty_rows())
             if not write_pty(payload):
                 return None
-            return delay, pastes
+            return delay, pastes + len(images)
         chunks = chunks or [text]
         # Keep tiny prompts as one syscall, including multiple inline frames:
         # that is the historical native first-turn/variable-binding contract.
         # Large inputs need frame-by-frame delivery to avoid starving Ink.
         if len(text.encode()) <= 256:
-            return (PASTE_SUBMIT_DELAY_S, len(chunks)) if write_pty(
+            return (PASTE_SUBMIT_DELAY_S, len(chunks) + len(images)) if write_pty(
                 b"".join(paste_bytes(chunk) for chunk in chunks)) else None
         for chunk in chunks:
             if not write_pty(paste_bytes(chunk)):
@@ -2245,16 +2257,17 @@ def _run_host(args):
                     continue
                 if readable and not read_pty_output():
                     return None
-        return PASTE_SUBMIT_DELAY_S, len(chunks)
+        return PASTE_SUBMIT_DELAY_S, len(chunks) + len(images)
 
     def write_paste(text: str, submit: bool = True) -> bool:
         """Write a prompt to the worker's PTY. Returns True on success.
         ``submit=False`` omits the trailing \\r (see paste_bytes)."""
-        if stage_paste(text) is None:
+        staged = stage_paste(text)
+        if staged is None:
             return False
         if not submit:
             return True
-        time.sleep(PASTE_SUBMIT_DELAY_S)
+        time.sleep(staged[0])
         return write_pty(b"\r")
 
     def write_enter() -> bool:
@@ -2599,7 +2612,8 @@ def _run_host(args):
                 )
             except Exception:
                 pass
-            slot["phase"] = "await_evidence"
+            if slot.get("phase") != "paste_write_failed":
+                slot["phase"] = "await_evidence"
             slot["maybe_written"] = True
 
     def semantic_foreign_turn_start(source: str) -> None:
@@ -2710,7 +2724,8 @@ def _run_host(args):
         if not turn_ref or slot.get("target_turn_ref") != turn_ref:
             return
         if slot.get("maybe_written"):
-            slot["phase"] = "await_evidence"
+            if slot.get("phase") != "paste_write_failed":
+                slot["phase"] = "await_evidence"
             slot["target_settled"] = True
             return
         slot["phase"] = "new_turn_fallback"
@@ -2822,19 +2837,9 @@ def _run_host(args):
 
         before_ms = int((time.time() - 0.1) * 1000)
         if not write_paste(slot["text"]):
-            slot["phase"] = "await_evidence"
-            try:
-                mark_semantic_evidence(
-                    short,
-                    slot["delivery_id"],
-                    evidence_status="pty-write-failed",
-                    maybe_written=True,
-                    timeout=SEMANTIC_LOCK_TIMEOUT_S,
-                )
-            except Exception:
-                pass
+            semantic_paste_write_failed(slot, "pty-write-failed")
             return {"ok": False, "delivered": False, "pending": True,
-                    "error": "PTY write failed"}
+                    "error": slot.get("write_failure_reason") or "PTY write failed"}
 
         now = time.time()
         slot["writes"].append(now)
@@ -2876,6 +2881,7 @@ def _run_host(args):
         slot["phase"] = "paste_write_failed"
         slot["maybe_written"] = True
         slot["write_failure_code"] = code
+        slot["write_failure_reason"] = state.pop("paste_failure_reason", None)
         try:
             mark_semantic_evidence(
                 short, slot["delivery_id"],
@@ -2885,17 +2891,18 @@ def _run_host(args):
         except Exception:
             pass
         broadcast({"type": "semantic_paste_write_failed",
-                   "delivery_id": slot["delivery_id"], "reason": code})
+                   "delivery_id": slot["delivery_id"],
+                   "reason": slot.get("write_failure_reason") or code})
 
     def stage_semantic_idle_paste(slot: dict, *, retry: bool) -> bool:
         if not prepare_semantic_write(slot):
             return False
-        now = time.time()
         staged = stage_paste(slot["text"])
         if staged is None:
             semantic_paste_write_failed(slot, "pty-write-failed")
             return False
         delay, pastes = staged
+        now = time.time()
         slot["submit_due"] = now + delay
         slot["submit_retry"] = retry
         slot["paste_staged"] = True
@@ -2934,8 +2941,10 @@ def _run_host(args):
             elif action == "reject":
                 semantic_reject_unwritten(
                     slot, code=slot.get("write_failure_code") or "pty-write-failed",
-                    message="Claude PTY paste made no progress; partial editor input "
-                            "was cleared without submission (worker still running)",
+                    message=(slot.get("write_failure_reason") or
+                             "Claude PTY paste made no progress") +
+                            "; partial editor input was cleared without submission "
+                            "(worker still running)",
                 )
             return
         if slot.get("phase") not in {"new_turn", "new_turn_fallback"}:

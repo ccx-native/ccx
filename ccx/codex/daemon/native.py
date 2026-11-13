@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from typing import Any
+from ccx.prompt_images import split_prompt_images
 from ccx.codex.delivery import (
     route as send_receipt_route,
 )
@@ -1443,12 +1444,16 @@ def _original_full_uuid_native(daemon, message: dict[str, Any]) -> dict[str, Any
                             "state": "submitted-unknown",
                         })
                         store.revalidate()
+                        images, rest = split_prompt_images(message["text"])
+                        native_input = [{"type": "localImage", "path": path} for path in images]
+                        if rest:
+                            native_input.append({"type": "text", "text": rest})
                         if route_kind == "steer":
                             try:
                                 daemon.client.request("turn/steer", {
                                     "threadId": thread_id,
                                     "expectedTurnId": target_turn,
-                                    "input": [{"type": "text", "text": message["text"]}],
+                                    "input": native_input,
                                     "clientUserMessageId": client_id,
                                 }, timeout=2)
                             except ProtocolError as error:
@@ -1462,7 +1467,7 @@ def _original_full_uuid_native(daemon, message: dict[str, Any]) -> dict[str, Any
                         else:
                             turn_params = {
                                 "threadId": thread_id,
-                                "input": [{"type": "text", "text": message["text"]}],
+                                "input": native_input,
                                 "clientUserMessageId": client_id,
                             }
                             for setting in ("model", "effort"):

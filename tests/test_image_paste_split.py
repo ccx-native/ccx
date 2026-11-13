@@ -94,10 +94,9 @@ def test_a_split_at_the_unit_limit_still_holds():
 
 
 @pytest.mark.parametrize("text", ["/tmp/work/red.png", "~/shots/My Shot.JPEG\n", "  /a b/c.gif  "])
-def test_a_prompt_that_is_only_an_image_path_stays_one_paste(text):
-    # Claude attaches it as the image; the [Image #N] placeholder matches it.
-    assert paste_chunks(text, 2) == [text]
-    assert transcript.BARE_IMAGE_PATH_RE.match(text.strip())
+def test_text_chunking_breaks_even_bare_paths(text):
+    # Existing absolute image files bypass text chunking in stage_paste.
+    _assert_safe(text, paste_chunks(text, 2))
 
 
 @pytest.mark.parametrize("text", ["look:\n/tmp/a.png", "/tmp/a.png\nand this", "shot.png"])
@@ -116,8 +115,6 @@ def test_random_prompts_never_trip_the_check():
               "\\", ".", "png", "image", "  ", "\"z.jpeg\"", "b.bmp"]
     for _ in range(400):
         text = "".join(rng.choice(pieces) for _ in range(rng.randint(1, 120)))
-        if transcript.BARE_IMAGE_PATH_RE.match(text.strip()):
-            continue
         _assert_safe(text, paste_chunks(text, 2))
 
 

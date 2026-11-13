@@ -19,7 +19,6 @@ from ccx.constants import (
     PTY_QUIESCENCE_S,
     PTY_WRITE_TIMEOUT_S,
 )
-from ccx.claude.transcript import BARE_IMAGE_PATH_RE
 
 # Claude (2.1.319) checks every pasted line that, trimmed, unquoted and with
 # backslash escapes removed, ends in .png, .jpg, .jpeg, .gif or .webp: it
@@ -84,12 +83,10 @@ def paste_chunks(text: str, max_newlines: int,
     no paste may carry one (a PTY under ``PASTE_INLINE_ROWS_RESERVED + 1``
     rows), so the caller falls back to a single paste.
 
-    No paste holds an image extension whole (see ``_IMAGE_EXTENSION_DOT``),
-    except in a prompt that is only an image path, which Claude attaches as
-    the image.
+    No text paste holds an image extension whole (see ``_IMAGE_EXTENSION_DOT``).
+    Image paths are staged separately, after checking they exist.
     """
-    breaks = (set() if BARE_IMAGE_PATH_RE.match(text.strip())
-              else {m.end() for m in _IMAGE_EXTENSION_DOT.finditer(text)})
+    breaks = {m.end() for m in _IMAGE_EXTENSION_DOT.finditer(text)}
     chunks: list[str] = []
     cur: list[str] = []
     units = newlines = 0
@@ -222,6 +219,59 @@ _ANSI_RE = re.compile(
     rb"|\x1b\[[0-9;?]*[ -/]*[@-~]"
     rb"|\x1b[@-Z\\-_]"
 )
+
+
+# Claude redraws only changed cells, so the space inside a new placeholder can
+# arrive as a cursor move: `[Image\x1b[10G#3]` (Claude 2.1.323).
+_IMAGE_PLACEHOLDER_RE = re.compile(rb"\[Image ?#(\d+)\]")
+_CHARSET_RE = re.compile(rb"\x1b[()*+][0-9A-Za-z]|[\x0e\x0f]")
+
+
+def image_placeholders(output: bytes | bytearray) -> set[int]:
+    """Placeholder numbers in ANSI-stripped PTY output, including split reads."""
+    text = _CHARSET_RE.sub(b"", _ANSI_RE.sub(b"", bytes(output)))
+    return {int(number) for number in _IMAGE_PLACEHOLDER_RE.findall(text)}
+
+
+def paste_image(fd: int, path: str, *, write, on_read, output,
+                timeout_s: float = 15.0) -> bool:
+    """Paste one image and drain output until a new placeholder is rendered.
+
+    Bounded blocking keeps the same staging path for idle and boundary sends.
+    The host's normal reader still forwards every byte to attached viewers.
+    """
+    deadline = time.monotonic() + timeout_s
+    # Consume old queued frames before taking the baseline for this paste.
+    while True:
+        if time.monotonic() >= deadline:
+            return False
+        try:
+            readable, _, _ = select.select([fd], [], [], 0)
+        except InterruptedError:
+            continue
+        except OSError:
+            return False
+        if not readable:
+            break
+        if on_read() is False:
+            return False
+    before = image_placeholders(output())
+    if not write(paste_bytes(path)):
+        return False
+    while True:
+        if image_placeholders(output()) - before:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        try:
+            readable, _, _ = select.select([fd], [], [], remaining)
+        except InterruptedError:
+            continue
+        except OSError:
+            return False
+        if readable and on_read() is False:
+            return False
 
 
 def pty_tail_reason(buf: bytes | bytearray, *, max_chars: int = 300) -> str | None:

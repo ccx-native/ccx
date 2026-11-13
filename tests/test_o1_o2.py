@@ -32,9 +32,10 @@ def test_bare_image_path_matches_its_image_placeholder(tmp_path):
     placeholder = [{"type": "text", "text": "[Image #1]"},
                    {"type": "image", "source": {"type": "base64", "data": "AA=="}}]
     path = _user_row(tmp_path, placeholder)
-    for sent in ("/tmp/work/red.png", "~/shots/My Shot.JPEG\n"):
+    for sent in ("/tmp/work/red.png", "/tmp/shots/My Shot.JPEG\n"):
         assert transcript.exact_user_prompt_event(path, sent)["uuid"] == "u1"
-    for sent in ("look at /tmp/red.png", "/tmp/notes.txt"):
+    # ccx pastes `~` paths as text, so they never become images.
+    for sent in ("look at /tmp/red.png", "/tmp/notes.txt", "~/shots/My Shot.JPEG"):
         assert transcript.exact_user_prompt_event(path, sent) is None
     # A different image path is a different prompt.
     path = _user_row(tmp_path, "/tmp/blue.jpg")

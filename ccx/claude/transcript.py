@@ -12,6 +12,7 @@ import re
 import stat
 import time
 
+from ccx.prompt_images import looks_like_image_line
 from ccx.system import oslayer
 from ccx.claude.context import compaction_unknown_context, compute_context_usage
 from ccx.store.record_cache import StampedCache
@@ -360,9 +361,7 @@ _ESCAPED_PASTED_CONTENT_RE = re.compile(
 
 # Claude stores a typed `<pasted_content>` tag escaped as `<\\pasted_content>`.
 _ESCAPED_TAG_RE = re.compile(r"<\\(/?pasted_content)")
-# Claude turns a prompt that is only an image path into an `[Image #N]` row.
-BARE_IMAGE_PATH_RE = re.compile(r"^[/~][^\n]*\.(?:png|jpe?g|gif|webp)$", re.IGNORECASE)
-_IMAGE_PLACEHOLDER_RE = re.compile(r"^\[Image #\d+\]$")
+_IMAGE_PLACEHOLDER_RE = re.compile(r"\[Image #\d+\]")
 
 
 def normalize_semantic_prompt_text(value: str | None) -> str:
@@ -378,12 +377,29 @@ def normalize_semantic_prompt_text(value: str | None) -> str:
 
 
 def prompt_matches(expected: str, actual: str | None) -> bool:
-    """Whether native prompt text ``actual`` is the sent prompt ``expected``
-    (already normalized and stripped). A bare image path also matches the
-    ``[Image #N]`` placeholder Claude stores in its place."""
+    """Match native text, allowing Claude's image placeholders at the front.
+
+    Image recognition is syntax-only: callers may reconcile after files vanish.
+    Plain prompts retain their exact normalized comparison.
+    """
     actual = normalize_semantic_prompt_text(actual).strip()
-    return bool(expected) and (actual == expected or bool(
-        BARE_IMAGE_PATH_RE.match(expected) and _IMAGE_PLACEHOLDER_RE.match(actual)))
+    if not expected:
+        return False
+    if actual == expected:
+        return True
+    if not any(looks_like_image_line(line) for line in expected.splitlines()):
+        return False
+    if not _IMAGE_PLACEHOLDER_RE.search(actual):
+        return False
+    # A path line pasted as text (its file was missing at staging) may remain;
+    # staging already rejects an existing image that failed to convert.
+    return _without_image_lines(expected) == _without_image_lines(
+        _IMAGE_PLACEHOLDER_RE.sub("", actual))
+
+
+def _without_image_lines(text: str) -> list[str]:
+    return " ".join(line for line in text.splitlines()
+                    if not looks_like_image_line(line)).split()
 
 
 def prompt_mismatch_event(delivery_id: str, expected: str, actual: str | None) -> dict:
